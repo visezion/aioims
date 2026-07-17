@@ -1,0 +1,117 @@
+.detail-modal{padding:0!important;background:#081929!important;border-color:#2b4a68!important;overflow:hidden!important}.device-detail-hero{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 22px;background:linear-gradient(135deg,#102a45,#0b1c2f);border-bottom:1px solid #254763}.device-detail-title{display:flex;align-items:center;gap:14px;min-width:0}.device-detail-title h2{margin:0 0 5px;font:800 22px Manrope;color:#f5f9ff;word-break:break-word}.device-detail-title p{margin:0;color:#91a8bd;font-size:12px;line-height:1.5;word-break:break-word}.device-detail-icon{width:46px;height:46px;border-radius:10px;display:grid;place-items:center;background:#17385c;color:#7db7ff;flex:none}.device-detail-actions{display:flex;align-items:center;gap:10px;flex:none}.device-detail-actions button{border:0;background:transparent;color:#b8cbe0;display:grid;place-items:center}.device-health-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding:14px 18px;background:#071727;border-bottom:1px solid #1d354f}.device-health-grid>div{min-height:78px;border:1px solid #1f3c59;border-radius:7px;background:#0b1c2f;padding:12px;position:relative;min-width:0}.device-health-grid svg{position:absolute;right:12px;top:12px;color:#68a7ff}.device-health-grid span{display:block;color:#7f98b1;font-size:10px;margin-bottom:7px}.device-health-grid b{display:block;color:#f0f6fd;font:800 14px Manrope;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:22px}.device-detail-tabs{display:flex;gap:4px;padding:0 18px;border-bottom:1px solid #1d354f;background:#0a1b2e;overflow:auto}.device-detail-tabs button{border:0;background:transparent;color:#8fa4ba;padding:14px 12px;font:800 11px 'DM Sans';white-space:nowrap;cursor:pointer}.device-detail-tabs button.active{color:#fff;border-bottom:2px solid #4f9af7}.device-detail-layout{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:18px}.device-detail-section{border:1px solid #1f3c59;border-radius:8px;background:#0b1c2f;padding:15px;min-width:0}.device-detail-layout>.device-detail-section.full{grid-column:1/-1;margin:0}.device-detail-section.full{margin:18px}.device-detail-section h3{display:flex;align-items:center;gap:8px;margin:0 0 13px;color:#eaf3fc;font:800 14px Manrope}.device-detail-section h3 svg{color:#7db7ff}.device-detail-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px}.device-detail-rows p,.configuration-head p{border-bottom:1px solid #19324b;margin:0;padding:10px 0;min-width:0}.device-detail-rows span,.configuration-head span{display:block;color:#748da7;font-size:10px;margin-bottom:4px}.device-detail-rows b,.configuration-head b{display:block;color:#dbe9f8;font:700 12px 'DM Sans';word-break:break-word}.environment-sensor-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:13px}.environment-sensor-list p{margin:0;border:1px solid #19324b;border-radius:7px;background:#071727;padding:11px}.environment-sensor-list span,.environment-sensor-list em{display:block;color:#8fa5ba;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.environment-sensor-list b{display:block;color:#e8f3ff;font:800 16px Manrope;margin:4px 0}.environment-sensor-list em{font-style:normal}.detail-table-wrap{overflow:auto;border:1px solid #19324b;border-radius:7px}.detail-table-wrap table{min-width:850px}.detail-table-wrap th,.detail-table-wrap td{padding:12px 13px}.detail-table-wrap td b{color:#e8f3ff}.vlan-chip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}.vlan-chip-grid>div{border:1px solid #1f3c59;border-radius:7px;background:#071727;padding:12px}.vlan-chip-grid b{display:block;color:#f0bf62;font:800 18px Manrope}.vlan-chip-grid span{display:block;color:#dbe8f5;margin:5px 0}.vlan-chip-grid em{font-style:normal;color:#88a1b9;font-size:10px}.configuration-head{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px;margin-bottom:12px}.device-config-view{max-height:520px;overflow:auto;margin:0;background:#06111f;border:1px solid #1f3b57;border-radius:7px;color:#d5e7f8;padding:14px;font:11px Consolas,monospace;white-space:pre-wrap}.detail-empty{color:#8da3ba;margin:0;line-height:1.6}.detail-text-block{border:1px solid #19324b;border-radius:7px;background:#071727;padding:12px;margin-bottom:10px}.detail-text-block b{display:block;color:#e8f3ff;margin-bottom:6px}.detail-text-block p{margin:0;color:#9fb3c8;line-height:1.6;white-space:pre-wrap}.detail-modal .form-actions{margin:0;padding:16px 18px;background:#071727;border-top:1px solid #1d354f;position:sticky;bottom:0}.detail-modal .plain-button{height:38px}.content.devices-page:has(.detail-modal){max-width:none}.devices-page .detail-modal.device-form.large{max-width:none;width:100%;margin:0}.terminal-workspace{display:block}.terminal-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 18px;margin-bottom:12px}.device-terminal-output{height:460px;overflow:auto;margin:0 0 12px;background:#020812;border:1px solid #1f3b57;border-radius:7px;color:#cdebd7;padding:14px;font:12px Consolas,'Courier New',monospace;line-height:1.55;white-space:pre-wrap}.device-terminal-form{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:stretch}.device-terminal-form span{display:flex;align-items:center;border:1px solid #1f3b57;border-radius:6px;background:#071727;color:#84b8ff;padding:0 12px;font:700 12px Consolas,'Courier New',monospace;white-space:nowrap}.device-terminal-form textarea{width:100%;min-height:48px;margin:0;border:1px solid #29445f;border-radius:6px;background:#071727;color:#e3edf7;padding:10px;font:12px Consolas,'Courier New',monospace;resize:vertical}.device-terminal-form .add{min-width:90px;justify-content:center}.terminal-presets{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.terminal-presets .plain-button{height:32px;padding:0 10px;font-size:10px}@media(max-width:1000px){.device-detail-layout{grid-template-columns:1fr}.device-detail-rows,.configuration-head,.terminal-meta{grid-template-columns:1fr}.device-detail-hero{align-items:flex-start}.device-detail-actions{align-items:flex-end;flex-direction:column}}@media(max-width:620px){.device-detail-hero{display:block}.device-detail-actions{margin-top:14px;align-items:flex-start}.device-health-grid{grid-template-columns:1fr}.device-detail-section.full{margin:12px}.device-detail-layout{padding:12px}.device-detail-layout>.device-detail-section.full{margin:0}.detail-modal .form-actions{justify-content:flex-start;flex-wrap:wrap}.detail-modal .form-actions .add{margin-left:0}.device-terminal-form{grid-template-columns:1fr}.device-terminal-form span{min-height:36px}.device-terminal-output{height:360px}}
+.vlan-membership-table table{min-width:980px}.vlan-port-list{display:flex;flex-wrap:wrap;gap:5px;max-width:520px}.vlan-port-list span{display:inline-flex;align-items:center;min-height:22px;border:1px solid #244763;border-radius:5px;background:#071727;color:#d8e8f8;padding:3px 7px;font:700 10px 'DM Sans';white-space:nowrap}.vlan-port-empty{color:#738da6}
+.live-terminal-actions{display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin:0 0 10px}.live-terminal-actions .add,.live-terminal-actions .plain-button{margin-left:0;height:28px;padding:0 9px;font-size:10px;border-radius:5px}.device-terminal-output.live-terminal{height:520px;background:#010711;color:#d6f8dd;font-size:12px;outline:0;caret-color:#5ee887}.device-terminal-output.live-terminal:focus{border-color:#5ee887;box-shadow:0 0 0 2px rgba(94,232,135,.18)}.device-terminal-output.live-terminal.connected{border-color:#2f7d56}
+.xterm-terminal-frame{height:560px;background:#010711;border:1px solid #1f3b57;border-radius:7px;overflow:hidden;padding:10px}.xterm-terminal-frame.connected{border-color:#2f7d56}.xterm-terminal-frame:focus-within{border-color:#5ee887;box-shadow:0 0 0 2px rgba(94,232,135,.18)}.xterm-terminal-frame .xterm{height:100%}.xterm-terminal-frame .xterm-viewport{background:#010711!important}.xterm-terminal-frame .xterm-screen{height:100%}.xterm-terminal-frame .xterm-cursor-block{background:#5ee887!important;color:#010711!important}
+.interface-detail-table table{min-width:1520px}.interface-detail-table td{vertical-align:top}.interface-ip-list{display:flex;flex-direction:column;gap:4px}.interface-ip-list span{display:inline-flex;width:max-content;max-width:220px;border:1px solid #244763;border-radius:5px;background:#071727;color:#d8e8f8;padding:3px 7px;font:700 10px 'DM Sans';word-break:break-all}
+.interface-connection-link{border:0;background:transparent;color:#76b7ff;font:800 11px 'DM Sans';padding:0;text-align:left;cursor:pointer}.interface-connection-link:hover{text-decoration:underline;color:#b9dcff}
+.device-health-grid .health-card{overflow:hidden;border-color:#244763;background:linear-gradient(180deg,#0d2136,#081929);box-shadow:inset 0 1px rgba(105,168,255,.1)}
+.device-health-grid .health-card:before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:#4f9af7}
+.device-health-grid .health-card svg{width:28px;height:28px;padding:6px;border-radius:8px;background:#102a45;color:#69a8ff;box-sizing:border-box}
+.device-health-grid .health-card span{text-transform:uppercase;font:900 9px 'DM Sans';letter-spacing:.25px}
+.device-health-grid .health-card b{font-size:15px}
+.device-health-grid .health-card.ok{border-color:#1f6b4a;background:linear-gradient(180deg,#0e2a2d,#081929)}
+.device-health-grid .health-card.ok:before{background:#22c55e}
+.device-health-grid .health-card.ok svg{background:#123e2f;color:#5ee887}
+.device-health-grid .health-card.warning{border-color:#765a22;background:linear-gradient(180deg,#2a2410,#081929)}
+.device-health-grid .health-card.warning:before{background:#f6c443}
+.device-health-grid .health-card.warning svg{background:#3f3015;color:#ffd277}
+.device-health-grid .health-card.danger{border-color:#783242;background:linear-gradient(180deg,#2b1420,#081929)}
+.device-health-grid .health-card.danger:before{background:#ef4444}
+.device-health-grid .health-card.danger svg{background:#401e28;color:#ff9b9b}
+.device-health-grid .health-card.info{border-color:#285b8b;background:linear-gradient(180deg,#102a45,#081929)}
+.device-health-grid .health-card.info:before{background:#4f9af7}
+.device-health-grid .health-card.info svg{background:#17385c;color:#8cc7ff}
+.device-health-grid .health-card.violet{border-color:#4f4a86;background:linear-gradient(180deg,#171f3d,#081929)}
+.device-health-grid .health-card.violet:before{background:#8b8cff}
+.device-health-grid .health-card.violet svg{background:#202b55;color:#b8bcff}
+.device-health-grid .health-card.muted{border-color:#33465b;background:linear-gradient(180deg,#101d2b,#081929)}
+.device-health-grid .health-card.muted:before{background:#64748b}
+.device-health-grid .health-card.muted svg{background:#142234;color:#9fb2c6}
+.config-backup-panel{border:1px solid #244663;border-radius:7px;background:#071727;margin:0 0 12px;overflow:hidden}.config-backup-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;padding:12px;border-bottom:1px solid #1d354f}.config-backup-head b{display:block;color:#eaf4ff;font:800 13px Manrope}.config-backup-head span{display:block;color:#8fa7bf;font-size:11px;line-height:1.45;margin-top:3px}.config-backup-head .add{height:34px;white-space:nowrap}.config-backup-list{display:grid}.config-backup-row{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 12px;border-top:1px solid #142b42}.config-backup-row:first-child{border-top:0}.config-backup-row b{display:block;color:#f2f8ff;font:800 12px Manrope}.config-backup-row span{display:block;color:#8fb0cf;font-size:10px;margin-top:3px}.config-backup-row em{display:block;color:#b9cde0;font-style:normal;font-size:11px;margin-top:4px;line-height:1.35}.config-backup-row .plain-button{height:31px;flex:none}@media(max-width:700px){.config-backup-head,.config-backup-row{display:block}.config-backup-head .add,.config-backup-row .plain-button{margin-top:10px}}
+
+/* Brand primary icon color overrides */
+.device-detail-icon,
+.device-health-grid .health-card.info svg,
+.device-detail-section h3 svg,
+body.theme-light .detail-modal .device-detail-icon,
+body.theme-light .detail-modal .health-card.info svg,
+body.theme-light .detail-modal .device-detail-section h3 svg{
+  color:var(--brand-primary,#2879e7)!important;
+}
+
+.device-detail-icon,
+.device-health-grid .health-card.info svg,
+body.theme-light .detail-modal .device-detail-icon,
+body.theme-light .detail-modal .health-card.info svg{
+  background:rgba(var(--brand-primary-rgb,40,121,231),.16)!important;
+}
+
+.device-health-grid .health-card.info:before{
+  background:var(--brand-primary,#2879e7)!important;
+}
+
+.device-detail-tabs button.active,
+body.theme-light .detail-modal .device-detail-tabs button.active{
+  border-bottom-color:var(--brand-primary,#2879e7)!important;
+  box-shadow:inset 0 -2px var(--brand-primary,#2879e7)!important;
+}
+
+/* Final brand border and shadow enforcement for device detail surfaces */
+.detail-modal,
+.device-health-grid>div,
+.device-detail-section,
+.environment-sensor-list p,
+.detail-table-wrap,
+.vlan-chip-grid>div,
+.device-config-view,
+.detail-text-block,
+.device-terminal-output,
+.device-terminal-form span,
+.device-terminal-form textarea,
+.xterm-terminal-frame,
+.interface-ip-list span,
+.config-backup-panel{
+  border-color:var(--brand-border-dark,#1d354f)!important;
+  border-radius:var(--brand-radius)!important;
+  box-shadow:var(--brand-shadow)!important;
+}
+
+.device-detail-hero,
+.device-health-grid,
+.device-detail-tabs,
+.device-detail-rows p,
+.configuration-head p,
+.detail-modal .form-actions,
+.config-backup-head,
+.config-backup-row{
+  border-color:var(--brand-border-dark,#1d354f)!important;
+}
+
+body.theme-light .detail-modal,
+body.theme-light .device-health-grid>div,
+body.theme-light .device-detail-section,
+body.theme-light .environment-sensor-list p,
+body.theme-light .detail-table-wrap,
+body.theme-light .vlan-chip-grid>div,
+body.theme-light .device-config-view,
+body.theme-light .detail-text-block,
+body.theme-light .device-terminal-output,
+body.theme-light .device-terminal-form span,
+body.theme-light .device-terminal-form textarea,
+body.theme-light .xterm-terminal-frame,
+body.theme-light .interface-ip-list span,
+body.theme-light .config-backup-panel{
+  border-color:rgba(var(--brand-border-rgb),.44)!important;
+  box-shadow:var(--brand-shadow)!important;
+}
+
+body.theme-light .device-detail-hero,
+body.theme-light .device-health-grid,
+body.theme-light .device-detail-tabs,
+body.theme-light .device-detail-rows p,
+body.theme-light .configuration-head p,
+body.theme-light .detail-modal .form-actions,
+body.theme-light .config-backup-head,
+body.theme-light .config-backup-row{
+  border-color:rgba(var(--brand-border-rgb),.4)!important;
+}

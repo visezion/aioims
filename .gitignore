@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.vite/
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Local runtime databases and backups
+*.db
+*.sqlite
+*.sqlite3
+data_backups/
+
+# Local build/cache artifacts
+tsconfig.tsbuildinfo
+*.log
+.env
+.env.*
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
