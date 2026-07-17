@@ -36,7 +36,7 @@ import {
 } from 'lucide-react';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
 import { DeviceTypeRecord, deviceTypeLabel, loadDeviceTypes } from './DeviceTypesPage';
-import { EnvironmentThresholdContext, environmentThresholdTone } from './environmentThresholds';
+import { EnvironmentMetric, EnvironmentThresholdContext, environmentThresholdTone } from './environmentThresholds';
 import { SearchableSelect } from './SearchableSelect';
 
 const api = 'http://127.0.0.1:8001/api/v1';
@@ -1298,6 +1298,7 @@ export function InfrastructurePage({ resource }: { resource: InfrastructureResou
   const [rackEnvironments, setRackEnvironments] = useState<Record<number, RackDeviceEnvironment>>({});
   const [rackTemperatureHistory, setRackTemperatureHistory] = useState<Record<string, RackTemperatureHistoryPoint[]>>({});
   const [pendingOpenTarget, setPendingOpenTarget] = useState<InfrastructureOpenTarget | null>(null);
+  const [componentAssignTarget, setComponentAssignTarget] = useState<ComponentAssignTarget | null>(null);
 
   useEffect(() => {
     autosaveReadyResourceRef.current = null;
@@ -1320,6 +1321,7 @@ export function InfrastructurePage({ resource }: { resource: InfrastructureResou
     setRackFormSite('');
     setRackFormLocation('');
     setLocationFormRooms('');
+    setComponentAssignTarget(null);
     setPlacementRecords((current) => ({ ...current, [resource]: loadRecords(resource) }));
   }, [resource]);
 
@@ -2136,6 +2138,7 @@ export function InfrastructurePage({ resource }: { resource: InfrastructureResou
           </div>
           <div className="device-actions">
             <button className="plain-button" onClick={() => openEdit(selected)}><Edit3 size={15} /> Edit</button>
+            {['Sites', 'Locations', 'Racks'].includes(resource) && <button className="plain-button" onClick={() => setComponentAssignTarget({ resource, record: selected })}><Box size={15} /> Add Component</button>}
             {(isIpDetail || isPrefixDetail) && <button className="plain-button"><ArrowLeft size={15} /> Move</button>}
             {isVrfDetail && <button className="plain-button"><Database size={15} /> Export</button>}
             <button className="plain-button danger-button" onClick={() => setDeleteTarget(selected)}><Trash2 size={15} /> Delete</button>
@@ -2235,6 +2238,7 @@ export function InfrastructurePage({ resource }: { resource: InfrastructureResou
             onBack={() => setSelected(null)}
             onEdit={() => openEdit(selected)}
             onDelete={() => setDeleteTarget(selected)}
+            onAddComponent={() => setComponentAssignTarget({ resource: 'Rooms', record: selected })}
             onAddRack={() => {
               setSelected(null);
               setTimeout(() => {
@@ -2282,6 +2286,14 @@ export function InfrastructurePage({ resource }: { resource: InfrastructureResou
             renderField={renderField}
             onCancel={() => { setShowForm(false); setEditing(null); }}
             onSubmit={handleSave}
+          />
+        )}
+
+        {componentAssignTarget && (
+          <ComponentAssignmentDialog
+            target={componentAssignTarget}
+            onCancel={() => setComponentAssignTarget(null)}
+            onAssigned={() => setComponentAssignTarget(null)}
           />
         )}
 
@@ -2555,6 +2567,14 @@ export function InfrastructurePage({ resource }: { resource: InfrastructureResou
             </div>
           </form>
         </div>
+      )}
+
+      {componentAssignTarget && (
+        <ComponentAssignmentDialog
+          target={componentAssignTarget}
+          onCancel={() => setComponentAssignTarget(null)}
+          onAssigned={() => setComponentAssignTarget(null)}
+        />
       )}
 
       <DeleteConfirmDialog
@@ -3886,6 +3906,398 @@ function roomRackVisualClass(value?: string) {
   return 'network';
 }
 
+const ROOM_COMPONENTS_KEY = 'aims-room-components';
+
+type RoomComponent = {
+  id: string;
+  roomKey: string;
+  category: string;
+  type: string;
+  name: string;
+  role?: string;
+  status: InfraStatus | 'Normal' | 'Warning' | 'Critical' | 'Offline' | 'Unknown';
+  manufacturer?: string;
+  model?: string;
+  serialNumber?: string;
+  assetTag?: string;
+  description?: string;
+  site?: string;
+  location?: string;
+  room?: string;
+  zone?: string;
+  rack?: string;
+  rackPosition?: string;
+  side?: string;
+  parentComponent?: string;
+  x: number;
+  y: number;
+  orientation?: string;
+  dataSourceType?: string;
+  dataSourceDetail?: string;
+  monitoringEnabled?: boolean;
+  ipAddress?: string;
+  hostname?: string;
+  protocol?: string;
+  pollingInterval?: string;
+  xmlEndpoint?: string;
+  xmlValuePath?: string;
+  xmlStatusPath?: string;
+  lastUpdate?: string;
+  currentValue?: string;
+  unit?: string;
+  notes?: string;
+  assignedResource?: InfrastructureResourceName | 'Device';
+  assignedRecordId?: string;
+  assignedRecordName?: string;
+  specs: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ComponentAssignTarget = {
+  resource: InfrastructureResourceName;
+  record: InfraRecord;
+};
+
+const roomComponentCatalog: Record<string, string[]> = {
+  'Environmental Monitoring': ['Temperature sensor', 'Humidity sensor', 'Smoke detector', 'Water-leak sensor', 'Airflow sensor', 'Dust / air-quality sensor', 'Room pressure sensor', 'Noise sensor'],
+  'Power Infrastructure': ['UPS', 'PDU', 'Intelligent PDU', 'Power meter', 'Circuit breaker', 'Distribution panel', 'Automatic Transfer Switch', 'Generator', 'Battery bank', 'Power feed', 'Surge protector'],
+  'Cooling Infrastructure': ['CRAC unit', 'In-row cooling unit', 'Split air conditioner', 'Precision cooling unit', 'Cooling fan', 'Exhaust fan', 'Chiller connection', 'Cooling sensor'],
+  'Security and Access': ['CCTV camera', 'Access-control reader', 'Door sensor', 'Motion detector', 'Biometric reader', 'Electronic lock', 'Alarm system'],
+  'Safety Equipment': ['Fire extinguisher', 'Fire-suppression system', 'Emergency light', 'Smoke alarm', 'Gas detector', 'Emergency shutdown switch'],
+  'Room Infrastructure': ['Rack', 'Cabinet', 'Raised-floor panel', 'Cable tray', 'Patch panel', 'Fiber enclosure', 'Grounding bar', 'Wall-mounted enclosure', 'Workbench', 'Custom component'],
+};
+
+const roomComponentTypeFields: Record<string, string[]> = {
+  UPS: ['Rated power', 'Rated apparent power', 'Input voltage', 'Output voltage', 'Current load', 'Load percentage', 'Battery charge', 'Estimated runtime', 'Bypass status'],
+  PDU: ['PDU type', 'Rated voltage', 'Maximum current', 'Maximum power', 'Current load', 'Load percentage', 'Number of outlets', 'Power feed', 'Breaker rating'],
+  'Intelligent PDU': ['PDU type', 'Rated voltage', 'Maximum current', 'Maximum power', 'Current load', 'Load percentage', 'Number of outlets', 'Power feed', 'Breaker rating'],
+  'Temperature sensor': ['Current temperature', 'Unit of measurement', 'Minimum acceptable value', 'Warning threshold', 'Critical threshold', 'Recovery threshold', 'Polling interval', 'Sensor accuracy'],
+  'Humidity sensor': ['Current humidity', 'Unit of measurement', 'Minimum acceptable value', 'Warning threshold', 'Critical threshold', 'Recovery threshold', 'Polling interval', 'Sensor accuracy'],
+  'CRAC unit': ['Cooling capacity', 'Supply temperature', 'Return temperature', 'Fan status', 'Compressor status', 'Operating mode', 'Setpoint', 'Current power consumption', 'Airflow rate', 'Filter status'],
+  'CCTV camera': ['IP address', 'Camera type', 'Resolution', 'Recording status', 'Field of view', 'Retention period', 'Connectivity status', 'Last heartbeat'],
+  'Circuit breaker': ['Rated current', 'Rated voltage', 'Number of poles', 'Breaker status', 'Protected circuit', 'Connected PDU', 'Trip status', 'Last test date'],
+};
+
+function roomKey(room: InfraRecord) {
+  return [room.site, room.location, room.name].map((part) => String(part || '').trim().toLowerCase()).join('|');
+}
+
+function loadAllRoomComponents(): RoomComponent[] {
+  try {
+    const rows = JSON.parse(localStorage.getItem(ROOM_COMPONENTS_KEY) || '[]');
+    return sanitizeRoomComponents(rows);
+  } catch {
+    return [];
+  }
+}
+
+function saveAllRoomComponents(rows: RoomComponent[]) {
+  localStorage.setItem(ROOM_COMPONENTS_KEY, JSON.stringify(sanitizeRoomComponents(rows)));
+  window.dispatchEvent(new CustomEvent('aims:room-components-changed'));
+}
+
+function loadRoomComponents(room: InfraRecord) {
+  const key = roomKey(room);
+  return loadAllRoomComponents().filter((component) => component.roomKey === key);
+}
+
+function saveRoomComponents(room: InfraRecord, rows: RoomComponent[]) {
+  const key = roomKey(room);
+  const other = loadAllRoomComponents().filter((component) => component.roomKey !== key);
+  const next = sanitizeRoomComponents([...other, ...rows]);
+  saveAllRoomComponents(next);
+  return next;
+}
+
+function sanitizeRoomComponents(value: unknown): RoomComponent[] {
+  return Array.isArray(value)
+    ? value.filter((row): row is RoomComponent => Boolean(row && typeof row === 'object' && typeof (row as RoomComponent).id === 'string'))
+    : [];
+}
+
+async function loadBackendRoomComponents(): Promise<{ configured: boolean; records: RoomComponent[]; unavailable: boolean }> {
+  const auth = await ensureApiToken();
+  const response = await fetch(`${api}/infrastructure/Components`, { headers: { Authorization: `Bearer ${auth}` } });
+  const json = await response.json();
+  if (response.status === 404) return { configured: false, records: [], unavailable: true };
+  if (!response.ok) throw new Error(json.detail || json.message || 'Unable to load room components from backend.');
+  return {
+    configured: Boolean(json.data?.configured),
+    records: sanitizeRoomComponents(json.data?.records),
+    unavailable: false,
+  };
+}
+
+async function saveBackendRoomComponents(rows: RoomComponent[]) {
+  const auth = await ensureApiToken();
+  const records = sanitizeRoomComponents(rows).map((component) => ({
+    ...component,
+    _merge_key: `component:${component.roomKey || ''}:${component.id || component.name || ''}`.toLowerCase(),
+  }));
+  const response = await fetch(`${api}/infrastructure/Components`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${auth}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ records }),
+  });
+  const json = await response.json();
+  if (response.status === 404) return 'unavailable';
+  if (!response.ok) throw new Error(json.detail || json.message || 'Unable to save room components to backend.');
+  return 'saved';
+}
+
+function roomComponentTone(component: RoomComponent) {
+  const metric = roomComponentMetric(component);
+  const value = roomComponentNumericValue(component, metric);
+  if (metric !== null && value !== null) {
+    const configuredTone = environmentThresholdTone(metric, value, thresholdContextForComponent(component));
+    if (configuredTone === 'danger') return 'red';
+    if (configuredTone === 'warning') return 'yellow';
+    if (configuredTone === 'normal') return 'green';
+  }
+  const status = String(component.status || '').toLowerCase();
+  if (status.includes('critical')) return 'red';
+  if (status.includes('warning')) return 'yellow';
+  if (status.includes('offline') || status.includes('unknown')) return 'gray';
+  if (status.includes('maintenance')) return 'purple';
+  if (status.includes('active') || status.includes('normal')) return 'green';
+  return 'blue';
+}
+
+function roomComponentMetric(component: RoomComponent): EnvironmentMetric | null {
+  const configured = String(component.specs?.thresholdMetric || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const allowed: EnvironmentMetric[] = ['temperature', 'power', 'humidity', 'airflow', 'voltage', 'current', 'frequency', 'battery', 'runtime', 'capacity', 'utilization', 'pressure', 'noise', 'water', 'smoke'];
+  if (allowed.includes(configured as EnvironmentMetric)) return configured as EnvironmentMetric;
+  const text = `${component.category || ''} ${component.type || ''} ${component.name || ''} ${component.unit || ''}`.toLowerCase();
+  if (/(temp|°c|\bc\b|celsius)/.test(text)) return 'temperature';
+  if (/(humidity|humid|\brh\b)/.test(text)) return 'humidity';
+  if (/(power|pdu|ups|watt|\bkw\b|\bw\b|load)/.test(text)) return 'power';
+  if (/(volt|\bv\b)/.test(text)) return 'voltage';
+  if (/(current|amp|\ba\b)/.test(text)) return 'current';
+  if (/(frequency|hz)/.test(text)) return 'frequency';
+  if (/(battery|charge)/.test(text)) return 'battery';
+  if (/(runtime|run time)/.test(text)) return 'runtime';
+  if (/(capacity|free|used)/.test(text)) return 'capacity';
+  if (/(utilization|utilisation|usage|percent|%)/.test(text)) return 'utilization';
+  if (/(airflow|cfm|fan)/.test(text)) return 'airflow';
+  if (/(pressure|pascal|\bpa\b)/.test(text)) return 'pressure';
+  if (/(noise|sound|db)/.test(text)) return 'noise';
+  if (/(water|leak|flood)/.test(text)) return 'water';
+  if (/(smoke|gas|air quality)/.test(text)) return 'smoke';
+  return null;
+}
+
+function roomComponentNumericValue(component: RoomComponent, metric: EnvironmentMetric | null): number | null {
+  if (!metric) return null;
+  const raw = String(component.currentValue || component.specs?.currentValue || '').trim();
+  const match = raw.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  let value = Number(match[0]);
+  if (!Number.isFinite(value)) return null;
+  const unit = String(component.unit || raw).toLowerCase();
+  if (metric === 'power' && /\bkw\b/.test(unit)) value *= 1000;
+  if (metric === 'power' && /\bmw\b/.test(unit)) value *= 1000000;
+  return value;
+}
+
+function thresholdContextForComponent(component: RoomComponent): EnvironmentThresholdContext {
+  return {
+    site: component.site || null,
+    location: component.location || null,
+    room: component.room || null,
+    rack: component.rack || null,
+    componentId: component.id,
+    componentName: component.name,
+    componentType: component.type,
+    componentCategory: component.category,
+    deviceId: component.assignedResource === 'Device' ? component.assignedRecordId : null,
+    deviceName: component.assignedResource === 'Device' ? component.assignedRecordName : null,
+  };
+}
+
+function roomComponentIcon(component: Pick<RoomComponent, 'category' | 'type'>) {
+  const text = `${component.category} ${component.type}`.toLowerCase();
+  if (text.includes('temperature')) return <Thermometer size={15} />;
+  if (text.includes('humidity') || text.includes('water')) return <Droplets size={15} />;
+  if (text.includes('smoke') || text.includes('fire') || text.includes('gas')) return <Bell size={15} />;
+  if (text.includes('ups') || text.includes('pdu') || text.includes('power') || text.includes('breaker')) return <Zap size={15} />;
+  if (text.includes('cool') || text.includes('crac') || text.includes('fan')) return <Snowflake size={15} />;
+  if (text.includes('camera') || text.includes('cctv')) return <Cctv size={15} />;
+  if (text.includes('door') || text.includes('lock') || text.includes('access')) return <LockKeyhole size={15} />;
+  if (text.includes('rack') || text.includes('cabinet')) return <Server size={15} />;
+  return <Box size={15} />;
+}
+
+function roomComponentVisualClass(component: Pick<RoomComponent, 'category' | 'type' | 'name'>) {
+  const text = `${component.category || ''} ${component.type || ''} ${component.name || ''}`.toLowerCase();
+  if (text.includes('camera') || text.includes('cctv')) return 'visual-camera';
+  if (text.includes('door') || text.includes('lock') || text.includes('access') || text.includes('reader')) return 'visual-access';
+  if (text.includes('ups') || text.includes('battery')) return 'visual-ups';
+  if (text.includes('pdu')) return 'visual-pdu';
+  if (text.includes('crac') || text.includes('cool') || text.includes('fan') || text.includes('air conditioner')) return 'visual-cooling';
+  if (text.includes('temperature') || text.includes('humidity') || text.includes('smoke') || text.includes('water') || text.includes('airflow') || text.includes('sensor')) return 'visual-sensor';
+  if (text.includes('fire') || text.includes('gas') || text.includes('suppression') || text.includes('emergency')) return 'visual-safety';
+  if (text.includes('rack') || text.includes('cabinet') || text.includes('patch') || text.includes('fiber')) return 'visual-infra';
+  if (text.includes('power') || text.includes('breaker') || text.includes('meter') || text.includes('generator') || text.includes('ats')) return 'visual-power';
+  return 'visual-generic';
+}
+
+function roomComponentMonitoringDetail(component: RoomComponent) {
+  if (!component.monitoringEnabled) return 'Manual entry. Values are stored from the form until monitoring is enabled.';
+  if (String(component.dataSourceType || '').toLowerCase() === 'xml') {
+    const endpoint = component.xmlEndpoint || component.ipAddress || component.hostname || 'configured XML endpoint';
+    const valuePath = component.xmlValuePath || 'configured XML value path';
+    const statusPath = component.xmlStatusPath || 'optional XML status path';
+    return `XML polling fetches ${endpoint}, parses ${valuePath} for the measured value, reads ${statusPath}, then updates value/status for thresholds and alerts.`;
+  }
+  return `${component.dataSourceType || 'Monitoring'} polling uses the configured host/protocol and interval, then stores the latest value and status on this component record.`;
+}
+
+function roomComponentValueLabel(component: Pick<RoomComponent, 'currentValue' | 'unit' | 'status' | 'monitoringEnabled'>) {
+  const value = String(component.currentValue || '').trim();
+  if (value) return `${value}${component.unit ? ` ${component.unit}` : ''}`;
+  return component.monitoringEnabled ? 'No value yet' : component.status || 'Not recorded';
+}
+
+function roomComponentDefaultPosition(type: string, index: number) {
+  const text = type.toLowerCase();
+  if (text.includes('camera') || text.includes('cctv')) return { x: 88, y: 12 };
+  if (text.includes('temperature')) return { x: 18, y: 17 };
+  if (text.includes('humidity')) return { x: 38, y: 17 };
+  if (text.includes('smoke')) return { x: 70, y: 17 };
+  if (text.includes('door') || text.includes('access')) return { x: 6, y: 58 };
+  if (text.includes('ups')) return { x: 16, y: 45 };
+  if (text.includes('crac') || text.includes('cool')) return { x: 16, y: 68 };
+  if (text.includes('pdu')) return { x: 88, y: 55 + (index % 2) * 16 };
+  return { x: Math.min(82, 28 + (index % 6) * 9), y: 36 + Math.floor(index / 6) * 12 };
+}
+
+function assignRoomComponentToTarget(component: RoomComponent, target: ComponentAssignTarget, index = 0): RoomComponent {
+  const record = target.record;
+  const now = new Date().toISOString();
+  const position = roomComponentDefaultPosition(component.type || component.name || 'Component', index);
+  const next: RoomComponent = {
+    ...component,
+    assignedResource: target.resource,
+    assignedRecordId: record.id,
+    assignedRecordName: resourceDisplayValue(target.resource, record),
+    updatedAt: now,
+    x: Number.isFinite(Number(component.x)) ? component.x : position.x,
+    y: Number.isFinite(Number(component.y)) ? component.y : position.y,
+  };
+  if (target.resource === 'Sites') {
+    next.site = record.name;
+    next.location = '';
+    next.room = '';
+    next.rack = '';
+    next.roomKey = '';
+  } else if (target.resource === 'Locations') {
+    next.site = record.site || '';
+    next.location = record.name;
+    next.room = '';
+    next.rack = '';
+    next.roomKey = '';
+  } else if (target.resource === 'Rooms') {
+    next.site = record.site || '';
+    next.location = record.location || '';
+    next.room = record.name || DEFAULT_ROOM_NAME;
+    next.rack = '';
+    next.roomKey = roomKey(record);
+  } else if (target.resource === 'Racks') {
+    const rackRoom = String(record.region || record.room || '').trim() || DEFAULT_ROOM_NAME;
+    next.site = record.site || '';
+    next.location = record.location || '';
+    next.room = rackRoom;
+    next.rack = record.name;
+    next.roomKey = [next.site, next.location, rackRoom].map((part) => String(part || '').trim().toLowerCase()).join('|');
+  }
+  return next;
+}
+
+function ComponentAssignmentDialog({ target, onCancel, onAssigned }: { target: ComponentAssignTarget; onCancel: () => void; onAssigned: () => void }) {
+  const [components, setComponents] = useState<RoomComponent[]>(() => loadAllRoomComponents());
+  const [query, setQuery] = useState('');
+  const [componentId, setComponentId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    loadBackendRoomComponents()
+      .then((result) => {
+        if (cancelled || result.unavailable) return;
+        saveAllRoomComponents(result.records);
+        setComponents(result.records);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const visible = components.filter((component) => [component.name, component.type, component.category, component.site, component.location, component.room, component.rack].filter(Boolean).join(' ').toLowerCase().includes(query.toLowerCase()));
+  const targetLabel = `${target.resource} / ${resourceDisplayValue(target.resource, target.record)}`;
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const selected = components.find((component) => component.id === componentId);
+    if (!selected) {
+      setError('Select a component to assign.');
+      return;
+    }
+    const assigned = assignRoomComponentToTarget(selected, target, components.length);
+    const next = components.map((component) => component.id === selected.id ? assigned : component);
+    setBusy(true);
+    setError('');
+    saveAllRoomComponents(next);
+    saveBackendRoomComponents(next)
+      .then(() => onAssigned())
+      .catch((saveError) => {
+        setBusy(false);
+        setError(saveError instanceof Error ? saveError.message : 'Unable to save component assignment to database.');
+      });
+  };
+
+  return createPortal(
+    <div className="room-component-modal" role="dialog" aria-modal="true">
+      <form className="room-component-form component-assign-form" onSubmit={submit}>
+        <div className="room-component-form-head">
+          <div>
+            <span>Assign Component</span>
+            <h2>Add Existing Component</h2>
+            <p>{targetLabel}</p>
+          </div>
+          <button type="button" onClick={onCancel}><X size={18} /></button>
+        </div>
+        <div className="room-component-step">
+          <b>Choose component</b>
+          <div className="room-component-form-grid">
+            <label className="full">Search<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, type, category, or current placement" /></label>
+          </div>
+          <div className="component-assign-list">
+            {visible.map((component) => (
+              <label key={component.id} className={componentId === component.id ? 'selected' : ''}>
+                <input type="radio" name="componentId" value={component.id} checked={componentId === component.id} onChange={() => setComponentId(component.id)} />
+                <span>{roomComponentIcon(component)}</span>
+                <b>{component.name}<small>{component.type} / {component.category}</small></b>
+                <em>{[component.site, component.location, component.room, component.rack].filter(Boolean).join(' / ') || 'Unassigned'}</em>
+              </label>
+            ))}
+            {!visible.length && <p className="empty">No components found. Create components from the Components page first.</p>}
+          </div>
+          <p className="room-component-help">This assigns the selected component to {targetLabel} and saves the placement in the backend database.</p>
+          {error && <p className="error-text">{error}</p>}
+        </div>
+        <div className="room-component-actions">
+          <button type="button" onClick={onCancel}>Cancel</button>
+          <button type="submit" disabled={busy || !componentId}>{busy ? 'Saving...' : 'Assign Component'}</button>
+        </div>
+      </form>
+    </div>,
+    document.body,
+  );
+}
+
 function RoomDetailOverview({
   room,
   racks,
@@ -3895,6 +4307,7 @@ function RoomDetailOverview({
   onBack,
   onEdit,
   onDelete,
+  onAddComponent,
   onAddRack,
   onOpenRack,
 }: {
@@ -3906,6 +4319,7 @@ function RoomDetailOverview({
   onBack: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onAddComponent: () => void;
   onAddRack: () => void;
   onOpenRack: (rack: InfraRecord) => void;
 }) {
@@ -3953,6 +4367,118 @@ function RoomDetailOverview({
     return (Number(b.position || 0) - Number(a.position || 0)) || a.name.localeCompare(b.name);
   });
   const topDevices = sortedDevices.slice(0, 5);
+  const [roomComponents, setRoomComponents] = useState<RoomComponent[]>(() => loadRoomComponents(room));
+  const [componentDialogOpen, setComponentDialogOpen] = useState(false);
+  const [selectedComponent, setSelectedComponent] = useState<RoomComponent | null>(null);
+  const [removeComponentTarget, setRemoveComponentTarget] = useState<RoomComponent | null>(null);
+  const [dragComponentId, setDragComponentId] = useState('');
+  const [componentSaveState, setComponentSaveState] = useState<'local' | 'saving' | 'saved' | 'error'>('local');
+  const componentCounts = roomComponents.reduce((counts, component) => {
+    const category = component.category.toLowerCase();
+    if (category.includes('environment')) counts.sensors += 1;
+    if (category.includes('power')) counts.power += 1;
+    if (category.includes('cooling')) counts.cooling += 1;
+    if (category.includes('security')) counts.security += 1;
+    if (roomComponentTone(component) === 'red') counts.critical += 1;
+    if (roomComponentTone(component) === 'yellow') counts.warning += 1;
+    if (roomComponentTone(component) === 'gray') counts.offline += 1;
+    return counts;
+  }, { sensors: 0, power: 0, cooling: 0, security: 0, critical: 0, warning: 0, offline: 0 });
+  const monitoredComponents = roomComponents.filter((component) => component.monitoringEnabled);
+  const onlineMonitoredComponents = monitoredComponents.filter((component) => !['gray', 'red'].includes(roomComponentTone(component))).length;
+  const componentAvailability = monitoredComponents.length ? Math.round((onlineMonitoredComponents / monitoredComponents.length) * 100) : null;
+
+  useEffect(() => {
+    const sync = () => setRoomComponents(loadRoomComponents(room));
+    window.addEventListener('aims:room-components-changed', sync);
+    return () => window.removeEventListener('aims:room-components-changed', sync);
+  }, [room.id, room.name, room.site, room.location]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const localRows = loadRoomComponents(room);
+    setRoomComponents(localRows);
+    setSelectedComponent(null);
+    setComponentSaveState('local');
+    loadBackendRoomComponents()
+      .then((result) => {
+        if (cancelled || result.unavailable) return;
+        const allLocalRows = loadAllRoomComponents();
+        if (!result.configured && allLocalRows.length) {
+          setComponentSaveState('saving');
+          saveBackendRoomComponents(allLocalRows)
+            .then((status) => !cancelled && setComponentSaveState(status === 'saved' ? 'saved' : 'local'))
+            .catch(() => !cancelled && setComponentSaveState('error'));
+          return;
+        }
+        saveAllRoomComponents(result.records);
+        if (!cancelled) setRoomComponents(result.records.filter((component) => component.roomKey === roomKey(room)));
+        if (!cancelled) setComponentSaveState('saved');
+      })
+      .catch(() => {
+        if (!cancelled) setComponentSaveState('error');
+      });
+    setSelectedComponent(null);
+    return () => {
+      cancelled = true;
+    };
+  }, [room.id, room.name, room.site, room.location]);
+
+  const persistRoomComponents = (next: RoomComponent[]) => {
+    setRoomComponents(next);
+    const allRows = saveRoomComponents(room, next);
+    setComponentSaveState('saving');
+    saveBackendRoomComponents(allRows)
+      .then((status) => setComponentSaveState(status === 'saved' ? 'saved' : 'local'))
+      .catch(() => setComponentSaveState('error'));
+  };
+
+  const addRoomComponent = (component: RoomComponent) => {
+    const next = [...roomComponents, component];
+    persistRoomComponents(next);
+    setSelectedComponent(component);
+    setComponentDialogOpen(false);
+  };
+
+  const removeRoomComponent = (component: RoomComponent) => {
+    const unassigned: RoomComponent = {
+      ...component,
+      roomKey: '',
+      room: '',
+      rack: '',
+      zone: '',
+      side: '',
+      assignedResource: undefined,
+      assignedRecordId: '',
+      assignedRecordName: '',
+      updatedAt: new Date().toISOString(),
+    };
+    const nextRoomRows = roomComponents.filter((item) => item.id !== component.id);
+    setRoomComponents(nextRoomRows);
+    setSelectedComponent(null);
+    setRemoveComponentTarget(null);
+    const existingRows = loadAllRoomComponents();
+    const found = existingRows.some((item) => item.id === component.id);
+    const allRows = found
+      ? existingRows.map((item) => item.id === component.id ? unassigned : item)
+      : [...existingRows, unassigned];
+    saveAllRoomComponents(allRows);
+    setComponentSaveState('saving');
+    saveBackendRoomComponents(allRows)
+      .then((status) => setComponentSaveState(status === 'saved' ? 'saved' : 'local'))
+      .catch(() => setComponentSaveState('error'));
+  };
+
+  const moveRoomComponent = (event: DragEvent<HTMLDivElement>) => {
+    if (!dragComponentId) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(4, Math.min(96, ((event.clientX - bounds.left) / bounds.width) * 100));
+    const y = Math.max(8, Math.min(88, ((event.clientY - bounds.top) / bounds.height) * 100));
+    const next = roomComponents.map((component) => component.id === dragComponentId ? { ...component, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, updatedAt: new Date().toISOString() } : component);
+    persistRoomComponents(next);
+    setSelectedComponent(next.find((component) => component.id === dragComponentId) || null);
+    setDragComponentId('');
+  };
 
   return (
     <div className="room-detail-workspace room-ops-redesign">
@@ -3967,6 +4493,7 @@ function RoomDetailOverview({
           <button type="button" onClick={onEdit}><Edit3 size={15} /> Edit</button>
           <button type="button"><Box size={15} /> Open Digital Twin</button>
           <button type="button"><Download size={15} /> Export <ChevronDown size={13} /></button>
+          <button type="button" onClick={onAddComponent}><Plus size={15} /> Add Component</button>
           <button type="button" className="primary" onClick={onAddRack}><Plus size={15} /> Add Rack</button>
         </div>
       </section>
@@ -3978,6 +4505,7 @@ function RoomDetailOverview({
         <RoomMetricCard icon={<Snowflake size={18} />} label="Cooling / Temperature" value={avgTemp} sub={temperature.value === null ? 'No sensor samples' : 'Avg. temperature'} tone="cyan" points={temperature.points} />
         <RoomMetricCard icon={<ShieldCheck size={18} />} label="Availability" value={availability === null ? 'No data' : `${availability}%`} sub={roomDevices.length ? 'From device status' : 'No devices installed'} tone="blue" />
         <RoomMetricCard icon={<Bell size={18} />} label="Active Alerts" value={issues.length} sub={issues.length ? `${criticalAlerts} critical / ${warningAlerts} warning` : 'No active alerts'} tone={criticalAlerts ? 'red' : warningAlerts ? 'orange' : 'green'} />
+        <RoomMetricCard icon={<Box size={18} />} label="Room Components" value={roomComponents.length} sub={`${componentCounts.sensors} sensors / ${componentCounts.power} power / ${componentSaveState === 'saved' ? 'DB saved' : componentSaveState === 'saving' ? 'saving...' : componentSaveState === 'error' ? 'DB sync issue' : 'local fallback'}`} tone={componentSaveState === 'error' ? 'orange' : 'cyan'} />
       </div>
 
       <div className="room-main-grid">
@@ -3996,19 +4524,41 @@ function RoomDetailOverview({
             <span><Thermometer size={14} /><b>{avgTemp}</b> cooling</span>
           </div>
           <div className="room-twin-body">
-            <div className="room-front-elevation">
+            <div
+              className="room-front-elevation"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={moveRoomComponent}
+            >
               <div className="room-ceiling-raceway" />
-              <div className="room-camera left" tabIndex={0}><Cctv size={20} /><small className="room-twin-tooltip align-left"><b>CCTV Camera</b><span>Position: Left corner</span><span>Status: {cctvStatus}</span><span>Room: {roomLabel}</span></small></div>
-              <div className="room-camera right" tabIndex={0}><Cctv size={20} /><small className="room-twin-tooltip align-right"><b>CCTV Camera</b><span>Position: Right corner</span><span>Status: {cctvStatus}</span><span>Room: {roomLabel}</span></small></div>
-              <div className="room-sensor-chip temp" tabIndex={0}><Thermometer size={12} /><b>TEMP</b><span>{avgTemp}</span><small className="room-twin-tooltip"><b>Temperature Sensor</b><span>Current: {avgTemp}</span><span>Samples: {temperature.sampleCount}</span><span>{temperature.label}</span></small></div>
-              <div className="room-sensor-chip humidity" tabIndex={0}><Droplets size={12} /><b>HUM</b><span>{humidityLabel}</span><small className="room-twin-tooltip"><b>Humidity Sensor</b><span>Current: {humidityLabel}</span><span>Source: Room record</span></small></div>
-              <div className="room-sensor-chip smoke" tabIndex={0}><b>SMOKE</b><span>{temperature.tone === 'red' ? 'CHECK' : 'NORMAL'}</span><small className="room-twin-tooltip"><b>Smoke Sensor</b><span>Status: {temperature.tone === 'red' ? 'Check room condition' : 'Normal'}</span><span>Linked alerts: {issues.length}</span></small></div>
-              <div className="room-sensor-chip cctv" tabIndex={0}><b>CCTV</b><span>{cctvStatus}</span><small className="room-twin-tooltip align-right"><b>CCTV System</b><span>Status: {cctvStatus}</span><span>Access door: {accessStatus}</span></small></div>
-              <div className="room-door left" tabIndex={0}><LockKeyhole size={18} /><b>ACCESS DOOR</b><span>{accessStatus}</span><small className="room-twin-tooltip align-left"><b>Access Door</b><span>Status: {accessStatus}</span><span>Last badge: {lastAccess}</span><span>Authorized: {authorizedPersonnel}</span></small></div>
-              <div className="room-crac-tower" tabIndex={0}><Snowflake size={15} /><b>CRAC 01</b><span>{temperature.value === null ? '-' : `${temperature.value}C`}</span><small className="room-twin-tooltip align-left"><b>Cooling Unit</b><span>Status: {coolingStatus}</span><span>Room temp: {avgTemp}</span><span>Sensor samples: {temperature.sampleCount}</span></small></div>
-              <div className="room-ups-tower" tabIndex={0}><Zap size={15} /><b>UPS 01</b><span>{power.watts ? 'Load' : '-'}</span><small className="room-twin-tooltip align-left"><b>UPS Power</b><span>Room load: {formatRackPowerValue(power, 'No power data')}</span><span>Known devices: {power.knownDevices}</span><span>Missing power: {power.unknownDevices}</span></small></div>
-              <div className="room-pdu-column a" tabIndex={0}><Plug size={15} /><b>PDU A</b><span>{power.watts ? 'OK' : '-'}</span><small className="room-twin-tooltip align-right"><b>PDU A</b><span>Status: {power.watts ? 'Available' : 'No load data'}</span><span>Total load: {formatRackPowerValue(power, 'No power data')}</span></small></div>
-              <div className="room-pdu-column b" tabIndex={0}><Plug size={15} /><b>PDU B</b><span>{power.watts ? 'OK' : '-'}</span><small className="room-twin-tooltip align-right"><b>PDU B</b><span>Status: {power.watts ? 'Available' : 'No load data'}</span><span>Total load: {formatRackPowerValue(power, 'No power data')}</span></small></div>
+              <div className="room-door left" tabIndex={0}><DoorOpen size={18} /><b>ROOM DOOR</b><span>Base object</span><small className="room-twin-tooltip align-left"><b>Room Door</b><span>Add an Access reader, Door contact, Electronic lock, or CCTV component to monitor this door.</span><span>Components can be dragged beside the door.</span></small></div>
+              {roomComponents.map((component) => (
+                <button
+                  key={component.id}
+                  type="button"
+                  draggable
+                  className={`room-component-node ${roomComponentVisualClass(component)} ${roomComponentTone(component)}${selectedComponent?.id === component.id ? ' selected' : ''}`}
+                  style={{ left: `${component.x}%`, top: `${component.y}%` }}
+                  onClick={() => setSelectedComponent(component)}
+                  onDragStart={(event) => {
+                    setDragComponentId(component.id);
+                    event.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onDragEnd={() => setDragComponentId('')}
+                >
+                  {roomComponentIcon(component)}
+                  <b>{component.name}</b>
+                  <span>{roomComponentValueLabel(component)}</span>
+                  <small className="room-twin-tooltip">
+                    <b>{component.name}</b>
+                    <span>Type: {component.type}</span>
+                    <span>Status: {component.status}</span>
+                    <span>Value: {roomComponentValueLabel(component)}</span>
+                    <span>Source: {component.monitoringEnabled ? component.dataSourceType || 'Monitoring enabled' : 'Manual entry'}</span>
+                    <span>Drag to reposition</span>
+                  </small>
+                </button>
+              ))}
+              {!roomComponents.length && <div className="room-component-empty-note">Use Add Component to place access control, UPS, PDU, cooling, cameras, and sensors.</div>}
               <div className="room-front-racks">
                 {rackRows.slice(0, 12).map((row) => (
                   <button
@@ -4080,6 +4630,10 @@ function RoomDetailOverview({
               <RoomEnvTile label="Humidity" value={humidityLabel} points={humidityValue ? [humidityValue - 1, humidityValue, humidityValue + 1, humidityValue, humidityValue - 1, humidityValue] : [0, 0]} />
               <RoomEnvTile label="Power Usage" value={formatRackPowerValue(power, '0 W')} points={power.points.length ? power.points : [15, 16, 16, 15, 17, 16, 18, 17]} />
               <RoomEnvTile label="Cooling Status" value={coolingStatus} points={temperature.points.length ? temperature.points : [0, 0]} />
+              <RoomEnvTile label="Water Leak" value={roomComponents.find((component) => component.type.toLowerCase().includes('water'))?.currentValue || 'Not recorded'} points={[0, 0]} />
+              <RoomEnvTile label="Smoke Status" value={roomComponents.find((component) => component.type.toLowerCase().includes('smoke'))?.currentValue || (temperature.tone === 'red' ? 'Check' : 'Normal')} points={[0, 0]} />
+              <RoomEnvTile label="Door Status" value={roomComponents.find((component) => component.type.toLowerCase().includes('door'))?.currentValue || accessStatus} points={[0, 0]} />
+              <RoomEnvTile label="Airflow" value={roomComponents.find((component) => component.type.toLowerCase().includes('airflow'))?.currentValue || 'Not recorded'} points={[0, 0]} />
             </div>
             <p className="room-normal-note"><CheckCircle2 size={15} /> {issues.length ? `${issues.length} room issue${issues.length === 1 ? '' : 's'} detected` : 'No active environment alerts from recorded sensors'}</p>
           </section>
@@ -4104,6 +4658,40 @@ function RoomDetailOverview({
                 <span>{issue.severity === 'critical' ? 'Critical' : 'Warning'}</span> {issue.device.name}: {issue.message}<small>{index + 2} min ago</small>
               </p>
             )) : <p><span>Normal</span> No active room alerts<small>Live</small></p>}
+          </section>
+
+          <section className="card room-component-detail-card">
+            <div className="rack-panel-title"><Box size={16} /> {selectedComponent ? 'Selected Component' : 'Room Components'} <b>{roomComponents.length}</b></div>
+            {selectedComponent ? (
+              <div className="room-component-detail">
+                <span className={`room-component-detail-icon ${roomComponentTone(selectedComponent)}`}>{roomComponentIcon(selectedComponent)}</span>
+                <h3>{selectedComponent.name}</h3>
+                <p>{selectedComponent.type} / {selectedComponent.category}</p>
+                <dl>
+                  <dt>Status</dt><dd>{selectedComponent.status}</dd>
+                  <dt>Value</dt><dd>{selectedComponent.currentValue || 'Not recorded'} {selectedComponent.unit || ''}</dd>
+                  <dt>Placement</dt><dd>{[selectedComponent.zone, selectedComponent.rack, selectedComponent.side].filter(Boolean).join(' / ') || 'Room level'}</dd>
+                  <dt>Data source</dt><dd>{selectedComponent.monitoringEnabled ? selectedComponent.dataSourceType || 'Monitoring enabled' : 'Manual entry'}</dd>
+                  <dt>Source details</dt><dd>{roomComponentMonitoringDetail(selectedComponent)}</dd>
+                  {selectedComponent.dataSourceDetail && <><dt>Source notes</dt><dd>{selectedComponent.dataSourceDetail}</dd></>}
+                  {selectedComponent.xmlEndpoint && <><dt>XML endpoint</dt><dd>{selectedComponent.xmlEndpoint}</dd></>}
+                  {selectedComponent.xmlValuePath && <><dt>XML value path</dt><dd>{selectedComponent.xmlValuePath}</dd></>}
+                  <dt>Last update</dt><dd>{formatDate(selectedComponent.updatedAt)}</dd>
+                </dl>
+                <div className="room-component-detail-actions">
+                  <button type="button" onClick={onAddComponent}><Edit3 size={14} /> Add another component</button>
+                  <button type="button" className="danger" onClick={() => setRemoveComponentTarget(selectedComponent)}><Trash2 size={14} /> Remove from room</button>
+                </div>
+              </div>
+            ) : (
+              <div className="room-component-summary">
+                <span><b>{componentCounts.sensors}</b><small>Sensors</small></span>
+                <span><b>{componentCounts.power}</b><small>Power</small></span>
+                <span><b>{componentCounts.cooling}</b><small>Cooling</small></span>
+                <span><b>{componentCounts.security}</b><small>Security</small></span>
+                <p>{componentAvailability === null ? 'No monitored components configured.' : `${componentAvailability}% monitored component availability.`}</p>
+              </div>
+            )}
           </section>
 
           <section className="card room-overview-card">
@@ -4147,6 +4735,7 @@ function RoomDetailOverview({
           <section className="card room-quick-actions">
             <div className="rack-panel-title"><Activity size={16} /> Quick Actions</div>
             <div>
+              <button type="button" onClick={onAddComponent}><Box size={18} /> Add Component</button>
               <button><Plus size={18} /> Add Rack</button>
               <button><Search size={18} /> Discover Devices</button>
               <button><ShieldCheck size={18} /> Run Audit</button>
@@ -4156,7 +4745,58 @@ function RoomDetailOverview({
           </section>
         </aside>
       </div>
+      {componentDialogOpen && (
+        <RoomComponentDialog
+          room={room}
+          racks={racks}
+          components={roomComponents}
+          onCancel={() => setComponentDialogOpen(false)}
+          onSave={addRoomComponent}
+        />
+      )}
+      {removeComponentTarget && (
+        <RoomComponentRemoveDialog
+          component={removeComponentTarget}
+          onCancel={() => setRemoveComponentTarget(null)}
+          onConfirm={() => removeRoomComponent(removeComponentTarget)}
+        />
+      )}
     </div>
+  );
+}
+
+function RoomComponentRemoveDialog({
+  component,
+  onCancel,
+  onConfirm,
+}: {
+  component: RoomComponent;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return createPortal(
+    <div className="room-component-modal" role="dialog" aria-modal="true" onMouseDown={onCancel}>
+      <section className="room-component-form component-remove-form" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="room-component-form-head">
+          <div>
+            <span>Room component assignment</span>
+            <h2><Trash2 size={20} /> Remove from room</h2>
+            <p>This keeps the component in the backend component database.</p>
+          </div>
+          <button type="button" onClick={onCancel}><X size={18} /></button>
+        </div>
+        <div className="component-remove-summary">
+          <b>{component.name || component.type || 'Component'}</b>
+          <span>{component.type || 'Component'} / {component.category || 'Uncategorized'}</span>
+          <small>{[component.site, component.location, component.room].filter(Boolean).join(' / ') || 'Room assignment'}</small>
+        </div>
+        <div className="room-component-actions">
+          <button type="button" onClick={onCancel}>Cancel</button>
+          <button type="button" className="danger" onClick={onConfirm}><Trash2 size={14} /> Remove from room</button>
+        </div>
+      </section>
+    </div>,
+    document.body,
   );
 }
 
@@ -4192,6 +4832,172 @@ function RoomEnvTile({ label, value, points }: { label: string; value: string; p
       <b>{value}</b>
       <RoomMiniSparkline points={points} />
     </div>
+  );
+}
+
+function RoomComponentDialog({
+  room,
+  racks,
+  components,
+  onCancel,
+  onSave,
+}: {
+  room: InfraRecord;
+  racks: InfraRecord[];
+  components: RoomComponent[];
+  onCancel: () => void;
+  onSave: (component: RoomComponent) => void;
+}) {
+  const categories = Object.keys(roomComponentCatalog);
+  const [category, setCategory] = useState(categories[0]);
+  const [type, setType] = useState(roomComponentCatalog[categories[0]][0]);
+  const selectedTypes = roomComponentCatalog[category] || [];
+  const specFields = roomComponentTypeFields[type] || ['Rated capacity', 'Current value', 'Maximum value', 'Maintenance interval', 'Last inspection date'];
+  const isCustom = type === 'Custom component';
+
+  useEffect(() => {
+    const firstType = roomComponentCatalog[category]?.[0] || 'Custom component';
+    setType(firstType);
+  }, [category]);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const resolvedType = isCustom ? String(form.get('customType') || '').trim() || 'Custom component' : type;
+    const position = roomComponentDefaultPosition(resolvedType, components.length);
+    const specs = specFields.reduce<Record<string, string>>((values, field) => {
+      const value = String(form.get(`spec:${field}`) || '').trim();
+      if (value) values[field] = value;
+      return values;
+    }, {});
+    const now = new Date().toISOString();
+    onSave({
+      id: `room-component-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      roomKey: roomKey(room),
+      category,
+      type: resolvedType,
+      name: String(form.get('name') || '').trim() || resolvedType,
+      role: String(form.get('role') || '').trim(),
+      status: (String(form.get('status') || 'Normal') as RoomComponent['status']),
+      manufacturer: String(form.get('manufacturer') || '').trim(),
+      model: String(form.get('model') || '').trim(),
+      serialNumber: String(form.get('serialNumber') || '').trim(),
+      assetTag: String(form.get('assetTag') || '').trim(),
+      description: String(form.get('description') || '').trim(),
+      site: room.site || '',
+      location: room.location || '',
+      room: room.name || DEFAULT_ROOM_NAME,
+      zone: String(form.get('zone') || '').trim(),
+      rack: String(form.get('rack') || '').trim(),
+      rackPosition: String(form.get('rackPosition') || '').trim(),
+      side: String(form.get('side') || '').trim(),
+      parentComponent: String(form.get('parentComponent') || '').trim(),
+      x: position.x,
+      y: position.y,
+      orientation: String(form.get('orientation') || '').trim(),
+      monitoringEnabled: form.get('monitoringEnabled') === 'on',
+      dataSourceType: String(form.get('dataSourceType') || '').trim(),
+      dataSourceDetail: String(form.get('dataSourceDetail') || '').trim(),
+      ipAddress: String(form.get('ipAddress') || '').trim(),
+      hostname: String(form.get('hostname') || '').trim(),
+      protocol: String(form.get('protocol') || '').trim(),
+      pollingInterval: String(form.get('pollingInterval') || '').trim(),
+      xmlEndpoint: String(form.get('xmlEndpoint') || '').trim(),
+      xmlValuePath: String(form.get('xmlValuePath') || '').trim(),
+      xmlStatusPath: String(form.get('xmlStatusPath') || '').trim(),
+      currentValue: String(form.get('currentValue') || '').trim(),
+      unit: String(form.get('unit') || '').trim(),
+      notes: String(form.get('notes') || '').trim(),
+      specs,
+      createdAt: now,
+      updatedAt: now,
+    });
+  };
+
+  return createPortal(
+    <div className="room-component-modal" role="dialog" aria-modal="true">
+      <form className="room-component-form" onSubmit={submit}>
+        <div className="room-component-form-head">
+          <div>
+            <span>System Room / Add Component</span>
+            <h2>Add Room Component</h2>
+            <p>{room.site || 'Unassigned site'} / {room.location || 'No location'} / {room.name || DEFAULT_ROOM_NAME}</p>
+          </div>
+          <button type="button" onClick={onCancel}><X size={18} /></button>
+        </div>
+
+        <div className="room-component-step">
+          <b>1. Component Type</b>
+          <div className="room-component-form-grid">
+            <label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Component type<select value={type} onChange={(event) => setType(event.target.value)}>{selectedTypes.map((item) => <option key={item}>{item}</option>)}</select></label>
+            {isCustom && <label>Custom type<input name="customType" placeholder="Component type name" /></label>}
+          </div>
+        </div>
+
+        <div className="room-component-step">
+          <b>2. Identity</b>
+          <div className="room-component-form-grid">
+            <label>Name<input name="name" required placeholder={`${type}-01`} /></label>
+            <label>Role<input name="role" placeholder="Primary, backup, monitoring..." /></label>
+            <label>Status<select name="status" defaultValue="Normal"><option>Normal</option><option>Warning</option><option>Critical</option><option>Offline</option><option>Maintenance</option><option>Unknown</option></select></label>
+            <label>Asset tag<input name="assetTag" /></label>
+            <label>Manufacturer<input name="manufacturer" /></label>
+            <label>Model<input name="model" /></label>
+            <label>Serial number<input name="serialNumber" /></label>
+            <label>Description<textarea name="description" rows={2} /></label>
+          </div>
+        </div>
+
+        <div className="room-component-step">
+          <b>3. Placement</b>
+          <div className="room-component-form-grid">
+            <label>Site<input value={room.site || ''} readOnly /></label>
+            <label>Location<input value={room.location || ''} readOnly /></label>
+            <label>Room<input value={room.name || DEFAULT_ROOM_NAME} readOnly /></label>
+            <label>Room zone<input name="zone" placeholder="Front, rear, ceiling, floor..." /></label>
+            <label>Rack<select name="rack" defaultValue=""><option value="">Room level</option>{racks.map((rack) => <option key={recordMergeKey('Racks', rack)} value={rack.name}>{rack.name}</option>)}</select></label>
+            <label>Rack position<input name="rackPosition" placeholder="U42, rear upper, rack front..." /></label>
+            <label>Side<select name="side" defaultValue=""><option value="">Not specified</option><option>Front</option><option>Rear</option><option>Left</option><option>Right</option><option>Ceiling</option><option>Floor</option></select></label>
+            <label>Parent component<select name="parentComponent" defaultValue=""><option value="">None</option>{components.map((component) => <option key={component.id} value={component.name}>{component.name}</option>)}</select></label>
+            <label>Orientation<input name="orientation" placeholder="North, rear-facing, wall-mounted..." /></label>
+          </div>
+        </div>
+
+        <div className="room-component-step">
+          <b>4. Specifications</b>
+          <div className="room-component-form-grid">
+            <label>Current value<input name="currentValue" placeholder="22.8, OK, 60..." /></label>
+            <label>Unit<input name="unit" placeholder="C, %, kW, V..." /></label>
+            {specFields.map((field) => <label key={field}>{field}<input name={`spec:${field}`} /></label>)}
+          </div>
+        </div>
+
+        <div className="room-component-step">
+          <b>5. Monitoring</b>
+          <div className="room-component-form-grid">
+            <label className="room-component-check"><input type="checkbox" name="monitoringEnabled" /> Monitoring enabled</label>
+            <label>Data source<select name="dataSourceType" defaultValue="Manual"><option>Manual</option><option>SNMP</option><option>REST API</option><option>XML</option><option>Modbus TCP</option><option>BACnet</option><option>MQTT</option><option>SSH</option><option>ICMP</option><option>Webhook</option></select></label>
+            <label>IP address<input name="ipAddress" /></label>
+            <label>Hostname<input name="hostname" /></label>
+            <label>Protocol<input name="protocol" placeholder="SNMP v2c, HTTPS, MQTT..." /></label>
+            <label>Polling interval<input name="pollingInterval" placeholder="60s" /></label>
+            <label>XML endpoint / file<input name="xmlEndpoint" placeholder="https://pdu.local/status.xml or /sensors.xml" /></label>
+            <label>XML value path<input name="xmlValuePath" placeholder="/response/sensor/value or sensor.temperature" /></label>
+            <label>XML status path<input name="xmlStatusPath" placeholder="/response/sensor/status (optional)" /></label>
+            <label>Data source detail<textarea name="dataSourceDetail" rows={2} placeholder="How to read this source, auth notes, expected XML tags, units, or fallback behavior." /></label>
+            <label>Notes<textarea name="notes" rows={2} placeholder="Manual value, verification status, maintenance notes..." /></label>
+          </div>
+          <p className="room-component-help">XML source: the backend stores the endpoint and XML paths with this component. A poller can fetch the XML, extract the value path, map the optional status path, then update this component value and alert state.</p>
+        </div>
+
+        <div className="room-component-actions">
+          <button type="button" onClick={onCancel}>Cancel</button>
+          <button type="submit">Add Component</button>
+        </div>
+      </form>
+    </div>,
+    document.body,
   );
 }
 

@@ -80,6 +80,28 @@ type DeviceDeletePrompt = { type: 'single'; device: Device } | { type: 'bulk' } 
 type Site = { id: number; name: string; location?: string | null };
 type PageMeta = { page: number; per_page: number; total: number; pages: number };
 type ProtocolResult = { protocol: string; status: string; latency_ms: number | null; detail: string };
+type StoredRoomComponent = {
+  id: string;
+  roomKey?: string;
+  name?: string;
+  category?: string;
+  type?: string;
+  status?: string;
+  site?: string;
+  location?: string;
+  room?: string;
+  rack?: string;
+  assignedResource?: string;
+  assignedRecordId?: string;
+  assignedRecordName?: string;
+  x?: number;
+  y?: number;
+  currentValue?: string;
+  unit?: string;
+  monitoringEnabled?: boolean;
+  dataSourceType?: string;
+  updatedAt?: string;
+};
 type ConfigBackup = {
   id: number;
   device_id: number;
@@ -271,6 +293,12 @@ export function AdvancedDeviceInventory() {
   const [bulkAction, setBulkAction] = useState<'ingest' | 'scan' | null>(null);
   const [deletePrompt, setDeletePrompt] = useState<DeviceDeletePrompt>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [componentAssignDevice, setComponentAssignDevice] = useState<Device | null>(null);
+  const [componentAssignRows, setComponentAssignRows] = useState<StoredRoomComponent[]>([]);
+  const [componentAssignQuery, setComponentAssignQuery] = useState('');
+  const [componentAssignSelectedId, setComponentAssignSelectedId] = useState('');
+  const [componentAssignBusy, setComponentAssignBusy] = useState(false);
+  const [componentAssignError, setComponentAssignError] = useState('');
   const [terminalCommand, setTerminalCommand] = useState('show version');
   const [terminalOutput, setTerminalOutput] = useState<Record<number, string>>({});
   const [terminalRunningId, setTerminalRunningId] = useState<number | null>(null);
@@ -303,6 +331,92 @@ export function AdvancedDeviceInventory() {
     localStorage.setItem('aims-api-token', json.data.token);
     setToken(json.data.token);
     return json.data.token as string;
+  };
+
+  const loadComponentsForAssignment = async () => {
+    let auth = await ensureToken();
+    const loadRows = async (currentAuth: string): Promise<StoredRoomComponent[]> => {
+      const response = await fetch(`${api}/infrastructure/Components`, { headers: { Authorization: `Bearer ${currentAuth}` } });
+      if (response.status === 401) {
+        localStorage.removeItem('aims-api-token');
+        auth = await ensureToken(true);
+        return loadRows(auth);
+      }
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.detail || json.message || 'Unable to load components.');
+      const rows = Array.isArray(json.data?.records) ? json.data.records : [];
+      return rows.filter((row: unknown): row is StoredRoomComponent => Boolean(row && typeof row === 'object' && typeof (row as StoredRoomComponent).id === 'string'));
+    };
+    return loadRows(auth);
+  };
+
+  const saveComponentsForAssignment = async (rows: StoredRoomComponent[]) => {
+    let auth = await ensureToken();
+    const saveRows = async (currentAuth: string): Promise<void> => {
+      const response = await fetch(`${api}/infrastructure/Components`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${currentAuth}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ records: rows.map((row) => ({ ...row, _merge_key: `component:${row.roomKey || ''}:${row.id || row.name || ''}`.toLowerCase() })) }),
+      });
+      if (response.status === 401) {
+        localStorage.removeItem('aims-api-token');
+        auth = await ensureToken(true);
+        return saveRows(auth);
+      }
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.detail || json.message || 'Unable to save component assignment.');
+    };
+    await saveRows(auth);
+    localStorage.setItem('aims-room-components', JSON.stringify(rows));
+    window.dispatchEvent(new CustomEvent('aims:room-components-changed'));
+  };
+
+  const openDeviceComponentAssign = async (device: Device) => {
+    setComponentAssignDevice(device);
+    setComponentAssignSelectedId('');
+    setComponentAssignQuery('');
+    setComponentAssignError('');
+    try {
+      setComponentAssignRows(await loadComponentsForAssignment());
+    } catch (error) {
+      setComponentAssignError(error instanceof Error ? error.message : 'Unable to load components.');
+    }
+  };
+
+  const assignComponentToDevice = async () => {
+    if (!componentAssignDevice || !componentAssignSelectedId) return;
+    const selectedComponent = componentAssignRows.find((component) => component.id === componentAssignSelectedId);
+    if (!selectedComponent) return;
+    const siteName = componentAssignDevice.site?.name || '';
+    const roomName = componentAssignDevice.room || '';
+    const now = new Date().toISOString();
+    const assigned: StoredRoomComponent = {
+      ...selectedComponent,
+      site: siteName,
+      location: componentAssignDevice.location || '',
+      room: roomName,
+      rack: componentAssignDevice.rack || '',
+      roomKey: roomName ? [siteName, componentAssignDevice.location || '', roomName].map((part) => String(part || '').trim().toLowerCase()).join('|') : selectedComponent.roomKey || '',
+      assignedResource: 'Device',
+      assignedRecordId: String(componentAssignDevice.id),
+      assignedRecordName: componentAssignDevice.name,
+      x: Number.isFinite(Number(selectedComponent.x)) ? selectedComponent.x : 45,
+      y: Number.isFinite(Number(selectedComponent.y)) ? selectedComponent.y : 45,
+      updatedAt: now,
+    };
+    const next = componentAssignRows.map((component) => component.id === assigned.id ? assigned : component);
+    setComponentAssignBusy(true);
+    setComponentAssignError('');
+    try {
+      await saveComponentsForAssignment(next);
+      setComponentAssignRows(next);
+      setComponentAssignDevice(null);
+      setMessage(`${assigned.name || assigned.type || 'Component'} assigned to ${componentAssignDevice.name}.`);
+    } catch (error) {
+      setComponentAssignError(error instanceof Error ? error.message : 'Unable to save component assignment.');
+    } finally {
+      setComponentAssignBusy(false);
+    }
   };
 
   const load = async (nextPage = page) => {
@@ -775,6 +889,7 @@ export function AdvancedDeviceInventory() {
       const json = await response.json();
       if (!response.ok) throw new Error(json.detail || 'Unable to save status refresh setting.');
       setStatusRefreshSeconds(seconds);
+      window.dispatchEvent(new CustomEvent('aims:status-refresh-config-changed'));
       setStatusRefreshNote(`Automatic status refresh set to every ${seconds} seconds.`);
     } catch (error) {
       setStatusRefreshNote(error instanceof Error ? error.message : 'Unable to save status refresh setting.');
@@ -1890,12 +2005,49 @@ export function AdvancedDeviceInventory() {
 
             <div className="form-actions">
               <button type="button" onClick={() => setDetail(null)}>Close</button>
+              <button type="button" className="plain-button" onClick={() => openDeviceComponentAssign(detail)}><Boxes size={15} /> Add Component</button>
               <button type="button" className="plain-button" disabled={!detail.management_ip || !detail.ssh_credential_id || collectingConfigId === detail.id} onClick={() => collectDeviceConfiguration(detail)}>
                 {collectingConfigId === detail.id ? 'Collecting SSH...' : 'Collect SSH configuration'}
               </button>
               <button type="button" className="add" onClick={() => { setDetail(null); openForm(detail); }}>Edit device</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {componentAssignDevice && (
+        <div className="modal-backdrop" onMouseDown={() => setComponentAssignDevice(null)}>
+          <form className="device-form large component-assign-form" onSubmit={(event) => { event.preventDefault(); void assignComponentToDevice(); }} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="form-header">
+              <div>
+                <h2>Add Component to Device</h2>
+                <p>{componentAssignDevice.name} / {componentAssignDevice.management_ip || 'No management IP'}</p>
+              </div>
+              <button type="button" onClick={() => setComponentAssignDevice(null)}><X size={18} /></button>
+            </div>
+            <div className="form-grid">
+              <label className="full">Search components<input value={componentAssignQuery} onChange={(event) => setComponentAssignQuery(event.target.value)} placeholder="Search by name, type, category, or placement" /></label>
+            </div>
+            <div className="component-assign-list">
+              {componentAssignRows
+                .filter((component) => [component.name, component.type, component.category, component.site, component.location, component.room, component.rack].filter(Boolean).join(' ').toLowerCase().includes(componentAssignQuery.toLowerCase()))
+                .map((component) => (
+                  <label key={component.id} className={componentAssignSelectedId === component.id ? 'selected' : ''}>
+                    <input type="radio" name="componentId" checked={componentAssignSelectedId === component.id} onChange={() => setComponentAssignSelectedId(component.id)} />
+                    <span><Boxes size={15} /></span>
+                    <b>{component.name || component.type || 'Unnamed component'}<small>{component.type || 'Custom component'} / {component.category || 'Uncategorized'}</small></b>
+                    <em>{[component.site, component.location, component.room, component.rack].filter(Boolean).join(' / ') || 'Unassigned'}</em>
+                  </label>
+                ))}
+              {!componentAssignRows.length && <p className="empty">No components found. Create components from the Components page first.</p>}
+            </div>
+            {componentAssignError && <p className="error-text">{componentAssignError}</p>}
+            <p className="room-component-help">This assigns the selected component to the device and saves the placement in the backend database.</p>
+            <div className="form-actions">
+              <button type="button" onClick={() => setComponentAssignDevice(null)}>Cancel</button>
+              <button className="add" type="submit" disabled={componentAssignBusy || !componentAssignSelectedId}>{componentAssignBusy ? 'Saving...' : 'Assign Component'}</button>
+            </div>
+          </form>
         </div>
       )}
 

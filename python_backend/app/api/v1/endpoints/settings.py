@@ -53,7 +53,7 @@ DEFAULT_SETTINGS = {
     },
     "environment_threshold_rules": {
         "value": "[]",
-        "description": "JSON rules for temperature and power alert thresholds by device, location, room, rack, or global scope.",
+        "description": "JSON rules for environmental, power, and component alert thresholds by site, location, room, rack, device, component, component type, component category, or global scope.",
     },
 }
 SENSITIVE_SETTINGS = {"snmp_community"}

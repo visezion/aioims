@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
 import {
+  ENVIRONMENT_METRIC_OPTIONS,
+  ENVIRONMENT_THRESHOLD_SCOPE_OPTIONS,
   ENVIRONMENT_THRESHOLDS_SETTING_KEY,
   EnvironmentThresholdRule,
   emptyEnvironmentThresholdRule,
@@ -134,6 +136,7 @@ export function SystemConfigurationPage() {
       const json = await response.json();
       if (!response.ok) throw new Error(json.detail || json.message || 'Unable to save refresh interval.');
       setStatusInterval(json.data?.value || statusInterval);
+      window.dispatchEvent(new CustomEvent('aims:status-refresh-config-changed'));
       setMessage('Device status refresh interval saved.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to save refresh interval.');
@@ -381,13 +384,13 @@ export function SystemConfigurationPage() {
         </section>
 
         <section className="card config-setting-card full config-threshold-card">
-          <div className="card-title">Temperature and Power Thresholds</div>
-          <p className="config-copy">Create alert ranges by global default, location, room, rack, or individual device. The most specific matching rule wins: device, rack, room, location, then global.</p>
+          <div className="card-title">Environment and Component Thresholds</div>
+          <p className="config-copy">Create normal, warning, and danger ranges for devices, racks, rooms, sites, and reusable components. The most specific matching rule wins: component, device, rack, room, location, site, component type, component category, then global.</p>
           <form onSubmit={saveThresholdRule} className="settings-form">
             <div className="form-grid threshold-form-grid">
-              <label>Metric<select value={thresholdForm.metric} onChange={(event) => updateThresholdForm('metric', event.target.value)}><option value="temperature">Temperature (C)</option><option value="power">Power (W)</option></select></label>
-              <label>Scope<select value={thresholdForm.scope} onChange={(event) => updateThresholdForm('scope', event.target.value)}><option value="global">Global</option><option value="location">Location</option><option value="room">Room</option><option value="rack">Rack</option><option value="device">Device</option></select></label>
-              <label>Target<input disabled={thresholdForm.scope === 'global'} value={thresholdForm.target} onChange={(event) => updateThresholdForm('target', event.target.value)} placeholder={thresholdForm.scope === 'device' ? 'Device name or ID' : thresholdForm.scope === 'rack' ? 'Rack name' : thresholdForm.scope === 'room' ? 'Room name' : thresholdForm.scope === 'location' ? 'Location name' : '*'} /></label>
+              <label>Metric<select value={thresholdForm.metric} onChange={(event) => updateThresholdForm('metric', event.target.value)}>{ENVIRONMENT_METRIC_OPTIONS.map((metric) => <option key={metric.value} value={metric.value}>{metric.label} ({metric.unitHint})</option>)}</select></label>
+              <label>Scope<select value={thresholdForm.scope} onChange={(event) => updateThresholdForm('scope', event.target.value)}>{ENVIRONMENT_THRESHOLD_SCOPE_OPTIONS.map((scope) => <option key={scope.value} value={scope.value}>{scope.label}</option>)}</select></label>
+              <label>Target<input disabled={thresholdForm.scope === 'global'} value={thresholdForm.target} onChange={(event) => updateThresholdForm('target', event.target.value)} placeholder={thresholdTargetHint(thresholdForm.scope)} /></label>
               <label className="toggle-row">Enabled<input type="checkbox" checked={thresholdForm.enabled} onChange={(event) => updateThresholdForm('enabled', event.target.checked)} /></label>
               <fieldset>
                 <legend>Normal range</legend>
@@ -413,7 +416,7 @@ export function SystemConfigurationPage() {
           <div className="threshold-rule-list">
             {thresholdRules.length ? thresholdRules.map((rule) => (
               <div key={rule.id} className={`threshold-rule-row ${rule.enabled ? '' : 'disabled'}`}>
-                <b>{rule.metric === 'temperature' ? 'Temperature' : 'Power'} / {rule.scope}</b>
+                <b>{metricLabel(rule.metric)} / {scopeLabel(rule.scope)}</b>
                 <span>{rule.scope === 'global' ? 'All targets' : rule.target}</span>
                 <em>Normal {rangeLabel(rule.normalMin, rule.normalMax)} | Warning {rangeLabel(rule.warningMin, rule.warningMax)} | Danger {rangeLabel(rule.dangerMin, rule.dangerMax)}</em>
                 <button className="row-action" type="button" onClick={() => editThresholdRule(rule)}>Edit</button>
@@ -495,4 +498,16 @@ function rangeLabel(min: string, max: string) {
   if (left) return `>= ${left}`;
   if (right) return `<= ${right}`;
   return 'not set';
+}
+
+function metricLabel(value: string) {
+  return ENVIRONMENT_METRIC_OPTIONS.find((metric) => metric.value === value)?.label || value;
+}
+
+function scopeLabel(value: string) {
+  return ENVIRONMENT_THRESHOLD_SCOPE_OPTIONS.find((scope) => scope.value === value)?.label || value;
+}
+
+function thresholdTargetHint(value: string) {
+  return ENVIRONMENT_THRESHOLD_SCOPE_OPTIONS.find((scope) => scope.value === value)?.targetHint || '*';
 }
