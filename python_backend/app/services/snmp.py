@@ -11,6 +11,8 @@ SYSTEM_OIDS = {
 }
 
 IF_DESCR = "1.3.6.1.2.1.2.2.1.2"
+IF_NAME = "1.3.6.1.2.1.31.1.1.1.1"
+IF_STACK_STATUS = "1.3.6.1.2.1.31.1.2.1.3"
 IF_TYPE = "1.3.6.1.2.1.2.2.1.3"
 IF_MTU = "1.3.6.1.2.1.2.2.1.4"
 IF_SPEED = "1.3.6.1.2.1.2.2.1.5"
@@ -18,7 +20,11 @@ IF_PHYS_ADDRESS = "1.3.6.1.2.1.2.2.1.6"
 IF_ADMIN_STATUS = "1.3.6.1.2.1.2.2.1.7"
 IF_OPER_STATUS = "1.3.6.1.2.1.2.2.1.8"
 IP_ADDRESS_IF_INDEX = "1.3.6.1.2.1.4.20.1.2"
+IP_NET_TO_MEDIA_PHYS_ADDRESS = "1.3.6.1.2.1.4.22.1.2"
+IP_NET_TO_PHYSICAL_PHYS_ADDRESS = "1.3.6.1.2.1.4.35.1.4"
 DOT1D_BASE_PORT_IF_INDEX = "1.3.6.1.2.1.17.1.4.1.2"
+DOT1D_TP_FDB_PORT = "1.3.6.1.2.1.17.4.3.1.2"
+DOT1Q_TP_FDB_PORT = "1.3.6.1.2.1.17.7.1.2.2.1.2"
 DOT1Q_VLAN_STATIC_NAME = "1.3.6.1.2.1.17.7.1.4.3.1.1"
 DOT1Q_VLAN_STATIC_EGRESS_PORTS = "1.3.6.1.2.1.17.7.1.4.3.1.2"
 DOT1Q_VLAN_STATIC_UNTAGGED_PORTS = "1.3.6.1.2.1.17.7.1.4.3.1.4"
@@ -348,11 +354,206 @@ class SnmpDiscoveryService:
         return neighbors
 
 
+class SnmpLayer2TraceService:
+    """Resolves an IP through ARP and finds a MAC in a switch forwarding table."""
+
+    def __init__(self, community: str, port: int = 161, timeout: float = 0.4) -> None:
+        self.community = community.strip()
+        self.port = port or 161
+        self.timeout = timeout
+        self.last_arp_if_index: int | None = None
+        self.last_arp_interface = ""
+
+    def resolve_ip_mac(self, host: str, target_ip: str) -> str:
+        if not self.community:
+            return ""
+        client = SnmpClient(host, self.community, port=self.port, timeout=self.timeout)
+        target_parts = tuple(int(part) for part in target_ip.split(".")) if _is_ipv4(target_ip) else ()
+        if not target_parts:
+            return ""
+        for oid in [IP_NET_TO_PHYSICAL_PHYS_ADDRESS, IP_NET_TO_MEDIA_PHYS_ADDRESS]:
+            try:
+                # ARP tables on backbone routers often exceed the normal inventory walk cap.
+                for item in client.walk(oid, limit=4096):
+                    suffix = _oid_tuple(item.oid)[len(_oid_tuple(oid)):]
+                    if suffix[-4:] != target_parts:
+                        continue
+                    mac = _mac_text(item)
+                    if _normalize_mac(mac):
+                        self.last_arp_if_index = suffix[-5] if oid == IP_NET_TO_MEDIA_PHYS_ADDRESS and len(suffix) >= 5 else (suffix[0] if suffix else None)
+                        if self.last_arp_if_index:
+                            try:
+                                interface = client.get(f"{IF_DESCR}.{self.last_arp_if_index}")
+                                self.last_arp_interface = _as_string(interface) or f"if{self.last_arp_if_index}"
+                            except SnmpError:
+                                self.last_arp_interface = f"if{self.last_arp_if_index}"
+                        return mac
+            except SnmpError:
+                continue
+        return ""
+
+    def discover_vlan_ids(self, host: str) -> list[int]:
+        """Return configured VLAN IDs from Q-BRIDGE when the device exposes them."""
+        if not self.community:
+            return []
+        client = SnmpClient(host, self.community, port=self.port, timeout=self.timeout)
+        vlan_ids: set[int] = set()
+        try:
+            for item in client.walk(DOT1Q_VLAN_STATIC_NAME, limit=1024):
+                vlan_id = _oid_tuple(item.oid)[-1]
+                if 1 <= vlan_id <= 4094:
+                    vlan_ids.add(vlan_id)
+        except SnmpError:
+            pass
+        return sorted(vlan_ids)
+
+    def find_mac_port(
+        self,
+        host: str,
+        mac_address: str,
+        vlan: int | None = None,
+        vlan_ids: list[int] | None = None,
+        cisco_vlan_context: bool = False,
+    ) -> list[dict[str, Any]]:
+        if not self.community:
+            return []
+        target_mac = _normalize_mac(mac_address)
+        if len(target_mac) != 12:
+            return []
+        client = SnmpClient(host, self.community, port=self.port, timeout=self.timeout)
+        try:
+            if_names = {index: _as_string(value) or f"if{index}" for index, value in _walk_by_index(client, IF_DESCR).items()}
+            bridge_to_if = _bridge_port_if_indexes(client)
+        except SnmpError:
+            return []
+
+        matches: list[dict[str, Any]] = []
+        seen: set[tuple[int, int | None]] = set()
+        target_suffix = ".".join(str(int(target_mac[index:index + 2], 16)) for index in range(0, 12, 2))
+        try:
+            direct_port = client.get(f"{DOT1D_TP_FDB_PORT}.{target_suffix}")
+            if direct_port and isinstance(direct_port.value, int):
+                bridge_port = direct_port.value
+                if_index = bridge_to_if.get(bridge_port)
+                seen.add((bridge_port, None))
+                matches.append({
+                    "bridge_port": bridge_port,
+                    "if_index": if_index,
+                    "interface": if_names.get(if_index or 0) or f"bridge-port-{bridge_port}",
+                    "vlan": None,
+                })
+        except SnmpError:
+            pass
+
+        # A routed ARP lookup often identifies the VLAN. Query that exact Q-BRIDGE
+        # entry first instead of relying on a bounded walk of a large MAC table.
+        if vlan and vlan > 0:
+            try:
+                vlan_port = client.get(f"{DOT1Q_TP_FDB_PORT}.{vlan}.{target_suffix}")
+                if vlan_port and isinstance(vlan_port.value, int):
+                    bridge_port = vlan_port.value
+                    if_index = bridge_to_if.get(bridge_port)
+                    identity = (bridge_port, vlan)
+                    if identity not in seen:
+                        seen.add(identity)
+                        matches.append({
+                            "bridge_port": bridge_port,
+                            "if_index": if_index,
+                            "interface": if_names.get(if_index or 0) or f"bridge-port-{bridge_port}",
+                            "vlan": vlan,
+                        })
+            except SnmpError:
+                pass
+
+        if not matches and cisco_vlan_context:
+            contexts = {item for item in (vlan_ids or []) if 1 <= item <= 4094}
+            if vlan and vlan > 0:
+                contexts.add(vlan)
+            for vlan_id in sorted(contexts):
+                match = self._find_cisco_vlan_context_mac_port(host, target_suffix, vlan_id)
+                if match:
+                    matches.append(match)
+
+        # Non-Cisco devices may only expose a walkable Q-BRIDGE table. Cisco IOS
+        # devices with VLAN contexts are intentionally not walked here: the exact
+        # community@VLAN lookup above is faster and avoids huge base FDB tables.
+        if not matches and not cisco_vlan_context:
+            for oid, has_vlan_index in [(DOT1Q_TP_FDB_PORT, True), (DOT1D_TP_FDB_PORT, False)]:
+                try:
+                    rows = client.walk(oid, limit=8192)
+                except SnmpError:
+                    continue
+                prefix_length = len(_oid_tuple(oid))
+                for item in rows:
+                    suffix = _oid_tuple(item.oid)[prefix_length:]
+                    if len(suffix) < 6 or _oid_mac(suffix[-6:]) != target_mac or not isinstance(item.value, int):
+                        continue
+                    found_vlan = suffix[-7] if has_vlan_index and len(suffix) >= 7 else None
+                    bridge_port = item.value
+                    if_index = bridge_to_if.get(bridge_port)
+                    identity = (bridge_port, found_vlan)
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    matches.append({
+                        "bridge_port": bridge_port,
+                        "if_index": if_index,
+                        "interface": if_names.get(if_index or 0) or f"bridge-port-{bridge_port}",
+                        "vlan": found_vlan,
+                    })
+        for match in matches:
+            if match.get("if_index") and _is_lag_interface(match.get("interface")):
+                match["member_interfaces"] = _lag_member_interface_names(client, match["if_index"], if_names)
+        return matches
+
+    def _find_cisco_vlan_context_mac_port(self, host: str, target_suffix: str, vlan_id: int) -> dict[str, Any] | None:
+        # Cisco IOS may expose BRIDGE-MIB only through community@VLAN contexts.
+        base_community = self.community.split("@", 1)[0]
+        client = SnmpClient(host, f"{base_community}@{vlan_id}", port=self.port, timeout=self.timeout)
+        try:
+            port_value = client.get(f"{DOT1D_TP_FDB_PORT}.{target_suffix}")
+            if not port_value or not isinstance(port_value.value, int):
+                return None
+            bridge_port = port_value.value
+            bridge_to_if = _bridge_port_if_indexes(client)
+            if_names = {index: _as_string(value) or f"if{index}" for index, value in _walk_by_index(client, IF_NAME).items()}
+            if not if_names:
+                if_names = {index: _as_string(value) or f"if{index}" for index, value in _walk_by_index(client, IF_DESCR).items()}
+        except SnmpError:
+            return None
+        if_index = bridge_to_if.get(bridge_port)
+        return {
+            "bridge_port": bridge_port,
+            "if_index": if_index,
+            "interface": if_names.get(if_index or 0) or f"bridge-port-{bridge_port}",
+            "vlan": vlan_id,
+            "lookup": "cisco-vlan-community",
+            "community_context": f"@{vlan_id}",
+            "member_interfaces": _lag_member_interface_names(client, if_index, if_names),
+        }
+
+
 def _walk_by_index(client: SnmpClient, base_oid: str) -> dict[int, SnmpValue]:
     values = {}
     for item in client.walk(base_oid, limit=512):
         values[_oid_tuple(item.oid)[-1]] = item
     return values
+
+
+def _is_ipv4(value: str) -> bool:
+    parts = value.split(".")
+    try:
+        return len(parts) == 4 and all(0 <= int(part) <= 255 for part in parts)
+    except ValueError:
+        return False
+
+
+def _normalize_mac(value: str) -> str:
+    return "".join(character for character in str(value).lower() if character in "0123456789abcdef")
+
+
+def _oid_mac(parts: tuple[int, ...]) -> str:
+    return "".join(f"{part:02x}" for part in parts)
 
 
 def _bridge_port_if_indexes(client: SnmpClient) -> dict[int, int]:
@@ -362,6 +563,29 @@ def _bridge_port_if_indexes(client: SnmpClient) -> dict[int, int]:
         if isinstance(item.value, int):
             mapping[bridge_port] = item.value
     return mapping
+
+
+def _lag_member_interface_names(client: SnmpClient, if_index: int | None, if_names: dict[int, str]) -> list[str]:
+    if not if_index:
+        return []
+    members = []
+    try:
+        base_length = len(_oid_tuple(IF_STACK_STATUS))
+        for item in client.walk(IF_STACK_STATUS, limit=2048):
+            suffix = _oid_tuple(item.oid)[base_length:]
+            if len(suffix) != 2:
+                continue
+            higher_index, lower_index = suffix
+            if higher_index == if_index and lower_index > 0:
+                members.append(if_names.get(lower_index, f"if{lower_index}"))
+    except SnmpError:
+        return []
+    return members
+
+
+def _is_lag_interface(name: Any) -> bool:
+    value = str(name or "").strip().lower()
+    return value.startswith(("po", "port-channel", "portchannel", "bundle-ether"))
 
 
 def _decode_port_bitmap(value: SnmpValue | None) -> list[int]:

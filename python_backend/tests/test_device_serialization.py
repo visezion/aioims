@@ -1,12 +1,15 @@
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from sqlalchemy import or_
 
 from app.api.v1.endpoints.devices import _apply_configuration_result, _collect_cisco_fan_environment, _collect_cisco_power_supply_environment, _collect_cisco_temperature_environment, _delete_topology_links_for_devices, _parse_interfaces_from_configuration, _parse_vlans_from_configuration, _serialize_device, _summarize_environment
 from app.api.v1.endpoints.discovery import _is_active_discovery, _upsert_device_links
-from app.api.v1.endpoints.topology import _attach_neighbor_links, _neighbor_candidate_for_node, _node_id, _upsert_ingested_device, get_topology
+from app.api.v1.endpoints.topology import TopologyIngestRequest, _attach_neighbor_links, _auto_ingest_trace_endpoint, _credential_ids_for_node, _neighbor_candidate_for_node, _node_id, _trace_connected_devices, _trace_via_snmp, _upsert_ingested_device, get_topology, trace_connected_devices
 from app.db.session import SessionLocal, init_db
+from app.models.app_config import AppConfig
+from app.models.credential_profile import CredentialProfile
 from app.models.device import Device
 from app.models.device_config_backup import DeviceConfigBackup
 from app.models.device_link import DeviceLink
@@ -28,7 +31,176 @@ class _StaticSnmpClient:
         return self.rows_by_oid.get(oid, [])
 
 
+class _FakeLayer2TraceService:
+    def __init__(self, community, port):
+        self.community = community
+        self.port = port
+
+    def resolve_ip_mac(self, host, target_ip):
+        return "00:11:22:33:44:55"
+
+    def find_mac_port(self, host, mac_address, vlan=None, vlan_ids=None, cisco_vlan_context=False):
+        if host == "198.51.100.20":
+            return [{"interface": "Po1", "member_interfaces": ["Te1/1/1"], "bridge_port": 1, "if_index": 1, "vlan": 20}]
+        if host == "198.51.100.21":
+            return [{"interface": "Gi1/0/12", "bridge_port": 12, "if_index": 12, "vlan": 20}]
+        return []
+
+
 class DeviceSerializationTests(unittest.TestCase):
+    def test_trace_does_not_auto_ingest_searched_endpoint(self):
+        init_db()
+        db = SessionLocal()
+        profile_id = None
+        setting = None
+        previous_setting_value = None
+        target_ip = "203.0.113.188"
+        try:
+            profile = CredentialProfile(name="Trace Auto-Ingest SNMP Test", credential_type="snmp_v2c", port=161, secret_encrypted="test")
+            db.add(profile)
+            db.flush()
+            profile_id = profile.id
+            setting = db.query(AppConfig).filter(AppConfig.key == "trace_default_snmp_credential_id").first()
+            if setting:
+                previous_setting_value = setting.value
+            else:
+                setting = AppConfig(key="trace_default_snmp_credential_id", description="Test trace default")
+                db.add(setting)
+            setting.value = str(profile.id)
+            db.commit()
+            trace = {
+                "nodes": [{"id": f"live:{target_ip}", "ip": target_ip, "mac_address": "00:11:22:33:44:99"}],
+                "links": [],
+                "live_snmp": {"used": True},
+            }
+
+            result = _auto_ingest_trace_endpoint(db, trace)
+
+            self.assertIsNone(result)
+            self.assertEqual(trace["live_snmp"]["auto_ingest"], "skipped")
+            self.assertIsNone(db.query(Device).filter(Device.management_ip == target_ip).first())
+        finally:
+            db.query(Device).filter(Device.management_ip == target_ip).delete(synchronize_session=False)
+            if profile_id:
+                db.query(CredentialProfile).filter(CredentialProfile.id == profile_id).delete(synchronize_session=False)
+            if setting:
+                if previous_setting_value is None:
+                    db.delete(setting)
+                else:
+                    setting.value = previous_setting_value
+            db.commit()
+            db.close()
+
+    def test_trace_uses_live_snmp_for_unmanaged_ip(self):
+        init_db()
+        db = SessionLocal()
+        device_ids = []
+        link_ids = []
+        try:
+            core = Device(name="SNMP Trace Core", management_ip="198.51.100.20", role="Core Switch", status="Active")
+            access = Device(name="SNMP Trace Access", management_ip="198.51.100.21", role="Access Switch", status="Active")
+            db.add_all([core, access])
+            db.flush()
+            device_ids = [core.id, access.id]
+            link = DeviceLink(local_device_id=core.id, remote_device_id=access.id, local_interface="Te1/1/1", remote_interface="Gi1/0/48", protocol="lldp")
+            db.add(link)
+            db.commit()
+            link_ids = [link.id]
+            discovered_target = DeviceLink(
+                local_device_id=access.id,
+                local_device_name=access.name,
+                local_ip=access.management_ip,
+                local_interface="Gi1/0/12",
+                remote_device_name="Unmanaged Trace Target",
+                remote_ip="198.51.100.250",
+                remote_interface="eth0",
+                protocol="lldp",
+            )
+            db.add(discovered_target)
+            db.commit()
+            link_ids.append(discovered_target.id)
+            candidates = [
+                {"device": core, "community": "public", "port": 161},
+                {"device": access, "community": "public", "port": 161},
+            ]
+
+            with patch("app.api.v1.endpoints.topology._snmp_trace_candidates", return_value=candidates), patch("app.api.v1.endpoints.topology.SnmpLayer2TraceService", _FakeLayer2TraceService), patch("app.api.v1.endpoints.topology._scan_single_neighbor", return_value=None):
+                trace = _trace_via_snmp(db, "198.51.100.250")
+
+            self.assertTrue(trace["live_snmp"]["used"])
+            self.assertEqual([node["name"] for node in trace["nodes"]], ["SNMP Trace Core", "SNMP Trace Access", "198.51.100.250"])
+            self.assertEqual(trace["nodes"][-1]["via"]["device_port"], "Gi1/0/12")
+            self.assertEqual(trace["nodes"][-1]["mac_address"], "00:11:22:33:44:55")
+
+            with patch("app.api.v1.endpoints.topology._snmp_trace_candidates", return_value=candidates), patch("app.api.v1.endpoints.topology.SnmpLayer2TraceService", _FakeLayer2TraceService), patch("app.api.v1.endpoints.topology._scan_single_neighbor", return_value=None):
+                response = trace_connected_devices(query="198.51.100.250", db=db, current_user=User(email="unit@test.local"))
+
+            self.assertTrue(response["data"]["live_snmp"]["used"])
+            self.assertEqual(response["data"]["roots"][0]["name"], "SNMP Trace Core")
+        finally:
+            if link_ids:
+                db.query(DeviceLink).filter(DeviceLink.id.in_(link_ids)).delete(synchronize_session=False)
+            if device_ids:
+                db.query(Device).filter(Device.id.in_(device_ids)).delete(synchronize_session=False)
+            db.commit()
+            db.close()
+
+    def test_trace_finds_device_by_mac_and_returns_backbone_route(self):
+        init_db()
+        db = SessionLocal()
+        device_ids = []
+        link_ids = []
+        try:
+            core = Device(name="Trace Core", management_ip="198.51.100.10", mac_address="00:11:22:33:44:55", role="Core Switch", status="Active")
+            access = Device(name="Trace Access", management_ip="198.51.100.11", mac_address="00:11:22:33:44:66", role="Access Switch", status="Active")
+            endpoint = Device(name="Trace Endpoint", management_ip="198.51.100.12", mac_address="00:11:22:33:44:77", role="Server", status="Active", interfaces='[{"name":"eth0","ip":"198.51.100.120","mac":"00:11:22:33:44:88"}]')
+            unrelated = Device(name="Trace Unrelated Branch", management_ip="198.51.100.13", role="Access Switch", status="Active")
+            db.add_all([core, access, endpoint, unrelated])
+            db.flush()
+            device_ids = [core.id, access.id, endpoint.id, unrelated.id]
+            db.add_all([
+                DeviceLink(local_device_id=core.id, remote_device_id=access.id, local_interface="Te1/1/1", remote_interface="Gi1/0/48", protocol="lldp"),
+                DeviceLink(local_device_id=access.id, remote_device_id=endpoint.id, local_interface="Gi1/0/12", remote_interface="eth0", protocol="lldp"),
+                DeviceLink(local_device_id=core.id, remote_device_id=unrelated.id, local_interface="Te1/1/2", remote_interface="Gi1/0/48", protocol="lldp"),
+                DeviceLink(local_device_id=core.id, remote_device_id=endpoint.id, local_interface="Vlan120", remote_interface="ARP neighbor", protocol="snmp-arp"),
+            ])
+            db.commit()
+            link_ids = [link.id for link in db.query(DeviceLink).filter(DeviceLink.local_device_id.in_(device_ids)).all()]
+
+            trace = _trace_connected_devices(db, "00:11:22:33:44:88")
+
+            self.assertEqual(trace["roots"][0]["name"], "Trace Core")
+            self.assertEqual([node["name"] for node in trace["nodes"]], ["Trace Core", "Trace Access", "Trace Endpoint"])
+            self.assertNotIn("Trace Unrelated Branch", [node["name"] for node in trace["nodes"]])
+            access_node = next(node for node in trace["nodes"] if node["name"] == "Trace Access")
+            self.assertEqual(access_node["via"]["device_port"], "Te1/1/1")
+            self.assertEqual(access_node["via"]["port"], "Gi1/0/48")
+            endpoint_trace = _trace_connected_devices(db, "00:11:22:33:44:88")
+            self.assertEqual(endpoint_trace["roots"][0]["name"], "Trace Core")
+            self.assertEqual(endpoint_trace["nodes"][-1]["name"], "Trace Endpoint")
+        finally:
+            if link_ids:
+                db.query(DeviceLink).filter(DeviceLink.id.in_(link_ids)).delete(synchronize_session=False)
+            if device_ids:
+                db.query(Device).filter(Device.id.in_(device_ids)).delete(synchronize_session=False)
+            db.commit()
+            db.close()
+
+    def test_topology_ingest_uses_per_node_credential_profiles(self):
+        payload = TopologyIngestRequest.model_validate({
+            "node_ids": ["ip:192.0.2.10", "ip:192.0.2.11"],
+            "snmp_credential_id": 10,
+            "ssh_credential_id": 20,
+            "node_credentials": {
+                "ip:192.0.2.10": {"snmp_credential_id": 11, "ssh_credential_id": 21},
+                "ip:192.0.2.11": {"snmp_credential_id": 12},
+            },
+        })
+
+        self.assertEqual(_credential_ids_for_node(payload, "ip:192.0.2.10"), (11, 21))
+        self.assertEqual(_credential_ids_for_node(payload, "ip:192.0.2.11"), (12, 20))
+        self.assertEqual(_credential_ids_for_node(payload, "ip:192.0.2.12"), (10, 20))
+
     def test_cisco_envmon_temperature_fan_and_power_supply_are_summarized(self):
         client = _StaticSnmpClient({
             "1.3.6.1.4.1.9.9.13.1.3.1.2": [SnmpValue("1.3.6.1.4.1.9.9.13.1.3.1.2.1005", 4, b"", b"SW#1, Sensor#1, GREEN")],

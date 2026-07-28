@@ -60,6 +60,7 @@ export function SystemConfigurationPage() {
   const [thresholdForm, setThresholdForm] = useState<Omit<EnvironmentThresholdRule, 'id' | 'updated_at'>>(emptyEnvironmentThresholdRule);
   const [editingThresholdId, setEditingThresholdId] = useState('');
   const [credentials, setCredentials] = useState<CredentialProfile[]>([]);
+  const [traceDefaultSnmpCredentialId, setTraceDefaultSnmpCredentialId] = useState('');
   const [credentialForm, setCredentialForm] = useState<CredentialForm>(emptyCredentialForm);
   const [message, setMessage] = useState('');
   const [deleteCredentialPrompt, setDeleteCredentialPrompt] = useState<CredentialProfile | null>(null);
@@ -95,6 +96,7 @@ export function SystemConfigurationPage() {
       const configBackupTimeout = settings.find((item: Setting) => item.key === 'device_config_backup_timeout_seconds');
       const configBackupLastRun = settings.find((item: Setting) => item.key === 'device_config_backup_last_run_at');
       const environmentThresholds = settings.find((item: Setting) => item.key === ENVIRONMENT_THRESHOLDS_SETTING_KEY);
+      const traceDefaultSnmp = settings.find((item: Setting) => item.key === 'trace_default_snmp_credential_id');
       if (environmentThresholds?.value) importEnvironmentThresholdRules(environmentThresholds.value);
       setStatusInterval(refresh?.value || '60');
       setBackupEnabled((configBackupEnabled?.value || 'false') === 'true');
@@ -104,6 +106,7 @@ export function SystemConfigurationPage() {
       setBackupScope(configBackupScope?.value || 'active_with_ssh');
       setBackupTimeout(configBackupTimeout?.value || '8');
       setBackupLastRun(configBackupLastRun?.value || '');
+      setTraceDefaultSnmpCredentialId(traceDefaultSnmp?.value || '');
       setThresholdRules(loadEnvironmentThresholdRules());
       await loadCredentials(auth);
       setMessage('');
@@ -167,6 +170,24 @@ export function SystemConfigurationPage() {
       setMessage('Automatic configuration backup settings saved.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to save backup automation settings.');
+    }
+  };
+
+  const saveTraceDefaultSnmpProfile = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      const auth = await ensureToken();
+      const response = await fetch(`${api}/settings/trace_default_snmp_credential_id`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${auth}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: traceDefaultSnmpCredentialId }),
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.detail || json.message || 'Unable to save the trace default SNMP profile.');
+      setTraceDefaultSnmpCredentialId(json.data?.value || '');
+      setMessage('Trace auto-ingest SNMP profile saved.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to save the trace default SNMP profile.');
     }
   };
 
@@ -366,6 +387,19 @@ export function SystemConfigurationPage() {
                 <button className="row-action danger" type="button" onClick={() => setDeleteCredentialPrompt(profile)}>Delete</button>
               </div>
             )) : <p className="config-copy">No credential profiles saved yet.</p>}
+          </div>
+          <div className="form-section compact-section">
+            <h3>Device Trace Auto-Ingest</h3>
+            <p className="config-copy">When Device Trace finds an endpoint outside inventory, save it with this SNMP profile and collect its LLDP/CDP neighbors when reachable.</p>
+            <form onSubmit={saveTraceDefaultSnmpProfile} className="settings-form">
+              <label>Default SNMP profile
+                <select value={traceDefaultSnmpCredentialId} onChange={(event) => setTraceDefaultSnmpCredentialId(event.target.value)}>
+                  <option value="">Do not auto-ingest traced endpoints</option>
+                  {credentials.filter((profile) => profile.credential_type === 'snmp_v2c').map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                </select>
+              </label>
+              <div className="form-actions"><button className="add" type="submit">Save trace profile</button></div>
+            </form>
           </div>
         </section>
 

@@ -8,5 +8,6 @@ from app.models.job import Job
 from app.models.device_link import DeviceLink
 from app.models.wireless_snapshot import WirelessSnapshot
 from app.models.device_config_backup import DeviceConfigBackup
+from app.models.trace_snapshot import TraceSnapshot
 
-__all__ = ["User", "Site", "Device", "AuditLog", "AppConfig", "CredentialProfile", "Job", "DeviceLink", "WirelessSnapshot"]
+__all__ = ["User", "Site", "Device", "AuditLog", "AppConfig", "CredentialProfile", "Job", "DeviceLink", "WirelessSnapshot", "TraceSnapshot"]

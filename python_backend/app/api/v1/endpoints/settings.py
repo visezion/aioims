@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, get_db
 from app.models.app_config import AppConfig
 from app.models.audit_log import AuditLog
+from app.models.credential_profile import CredentialProfile
 from app.models.user import User
 
 router = APIRouter()
@@ -22,6 +23,10 @@ DEFAULT_SETTINGS = {
     "snmp_community": {
         "value": "",
         "description": "SNMP v2c read-only community used by discovery and inventory polling.",
+    },
+    "trace_default_snmp_credential_id": {
+        "value": "",
+        "description": "Saved SNMP v2c profile assigned when Device Trace automatically ingests an unknown endpoint.",
     },
     "device_config_backup_enabled": {
         "value": "false",
@@ -86,7 +91,7 @@ def update_setting(key: str, payload: SettingUpdate, db: Session = Depends(get_d
         row = AppConfig(key=key, value=defaults["value"], description=defaults["description"])
         db.add(row)
         db.flush()
-    value = _validate_value(key, payload.value)
+    value = _validate_value(db, key, payload.value)
     row.value = value
     audit_value = "***configured***" if key in SENSITIVE_SETTINGS and value else "***cleared***" if key in SENSITIVE_SETTINGS else value
     db.add(AuditLog(action="update_setting", entity_type="setting", entity_id=row.id, details=f"{current_user.email}: {key}={audit_value}"))
@@ -116,7 +121,7 @@ def _ensure_defaults(db: Session) -> None:
         db.commit()
 
 
-def _validate_value(key: str, value: str) -> str:
+def _validate_value(db: Session, key: str, value: str) -> str:
     if key == "device_status_refresh_seconds":
         try:
             seconds = int(value)
@@ -130,6 +135,18 @@ def _validate_value(key: str, value: str) -> str:
         if len(stripped) > 128:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="SNMP community must be 128 characters or fewer")
         return stripped
+    if key == "trace_default_snmp_credential_id":
+        stripped = value.strip()
+        if not stripped:
+            return ""
+        try:
+            credential_id = int(stripped)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Trace default SNMP profile must be a valid profile ID") from exc
+        profile = db.query(CredentialProfile).filter(CredentialProfile.id == credential_id, CredentialProfile.credential_type == "snmp_v2c").first()
+        if not profile:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Select an existing SNMP v2c profile for trace auto-ingest")
+        return str(credential_id)
     if key == "device_config_backup_enabled":
         lowered = value.strip().lower()
         if lowered not in {"true", "false"}:

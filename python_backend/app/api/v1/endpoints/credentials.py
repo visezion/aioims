@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
 from app.core.secret_store import encrypt_secret
+from app.models.app_config import AppConfig
 from app.models.audit_log import AuditLog
 from app.models.credential_profile import CredentialProfile
 from app.models.user import User
@@ -80,6 +81,10 @@ def delete_credential(
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Credential profile not found")
     details = {"name": row.name, "type": row.credential_type}
+    trace_default = db.query(AppConfig).filter(AppConfig.key == "trace_default_snmp_credential_id").first()
+    if trace_default and trace_default.value == str(credential_id):
+        trace_default.value = ""
+        details["trace_auto_ingest_default_cleared"] = True
     db.delete(row)
     _audit(db, current_user, "delete_credential", credential_id, details)
     db.commit()

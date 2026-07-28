@@ -60,6 +60,10 @@ type TopologyLink = {
   protocol: string;
   last_seen_at?: string | null;
 };
+type NodeCredentialSelection = {
+  snmp_credential_id?: number | null;
+  ssh_credential_id?: number | null;
+};
 type InventoryDevice = {
   id: number;
   name?: string | null;
@@ -98,6 +102,7 @@ export function AutoScanPage() {
   const [topologyLinks, setTopologyLinks] = useState<TopologyLink[]>([]);
   const [topologyNodes, setTopologyNodes] = useState<TopologyNode[]>([]);
   const [selectedDiscoveredNodeIds, setSelectedDiscoveredNodeIds] = useState<string[]>([]);
+  const [nodeCredentialSelections, setNodeCredentialSelections] = useState<Record<string, NodeCredentialSelection>>({});
   const [topologyLoading, setTopologyLoading] = useState(false);
   const [topologyError, setTopologyError] = useState('');
   const [ingesting, setIngesting] = useState(false);
@@ -156,6 +161,10 @@ export function AutoScanPage() {
       setSelectedDiscoveredNodeIds((current) => {
         const selectable = new Set(nodes.filter((node: TopologyNode) => !node.managed).map((node: TopologyNode) => node.id));
         return current.filter((nodeId) => selectable.has(nodeId));
+      });
+      setNodeCredentialSelections((current) => {
+        const selectable = new Set(nodes.filter((node: TopologyNode) => !node.managed).map((node: TopologyNode) => node.id));
+        return Object.fromEntries(Object.entries(current).filter(([nodeId]) => selectable.has(nodeId)));
       });
       setTopologyError('');
     } catch (error) {
@@ -242,6 +251,33 @@ export function AutoScanPage() {
       : Array.from(new Set([...current, nodeId])));
   };
 
+  const updateNodeCredentialSelection = (
+    nodeId: string,
+    field: keyof NodeCredentialSelection,
+    value: string,
+  ) => {
+    setNodeCredentialSelections((current) => ({
+      ...current,
+      [nodeId]: { ...current[nodeId], [field]: value ? Number(value) : null },
+    }));
+    setSelectedDiscoveredNodeIds((current) => current.includes(nodeId) ? current : [...current, nodeId]);
+  };
+
+  const assignCredentialToSelectedNodes = (field: keyof NodeCredentialSelection, value: string) => {
+    const selectedNodeIds = selectedDiscoveredNodeIds.filter((nodeId) => topologyNodes.some((node) => node.id === nodeId && !node.managed));
+    if (!selectedNodeIds.length) return;
+    const credentialId = value === 'default' ? null : Number(value);
+    setNodeCredentialSelections((current) => ({
+      ...current,
+      ...Object.fromEntries(selectedNodeIds.map((nodeId) => [
+        nodeId,
+        { ...current[nodeId], [field]: credentialId },
+      ])),
+    }));
+    setTopologyError('');
+    setMessage(`${field === 'snmp_credential_id' ? 'SNMP' : 'SSH'} profile assigned to ${selectedNodeIds.length} selected device${selectedNodeIds.length === 1 ? '' : 's'}.`);
+  };
+
   const ingestDiscoveredDevices = async (fullScan: boolean, explicitNodeIds: string[] = []) => {
     const discoveredIds = new Set(topologyNodes.filter((node) => !node.managed).map((node) => node.id));
     const requestedNodeIds = explicitNodeIds.length ? explicitNodeIds : selectedDiscoveredNodeIds;
@@ -252,7 +288,7 @@ export function AutoScanPage() {
     }
     setIngesting(true);
     setTopologyError('');
-    setMessage(fullScan ? 'Full scanning and ingesting discovered device...' : 'Ingesting discovered device...');
+    setMessage(fullScan ? 'Full scanning selected devices and detecting their direct neighbors...' : 'Ingesting discovered device...');
     try {
       const auth = await ensureToken();
       const placement = scanPlacement(form, rackOptions);
@@ -272,13 +308,14 @@ export function AutoScanPage() {
           rack_key: placement.rack_key,
           snmp_credential_id: form.snmp_credential_id ? Number(form.snmp_credential_id) : null,
           ssh_credential_id: form.ssh_credential_id ? Number(form.ssh_credential_id) : null,
+          node_credentials: Object.fromEntries(nodeIds.map((nodeId) => [nodeId, nodeCredentialSelections[nodeId] || {}])),
         }),
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json.detail || json.message || 'Neighbor ingest failed.');
       const summary = json.data || {};
       const typeSummary = await syncDeviceTypesFromInventory(auth);
-      setMessage(`Ingest complete. ${summary.created || 0} created, ${summary.updated || 0} updated, ${summary.scanned || 0} full scanned, ${summary.configs_collected || 0} SSH configs collected, ${summary.skipped || 0} skipped.${deviceTypeSyncMessage(typeSummary)}`);
+      setMessage(`Ingest complete. ${summary.created || 0} selected devices created, ${summary.updated || 0} updated, ${summary.neighbors_detected || 0} direct neighbors detected, ${summary.neighbors_created || 0} new neighbors added, ${summary.neighbors_scanned || 0} neighbors scanned, ${summary.configs_collected || 0} SSH configs collected, ${summary.skipped || 0} skipped.${deviceTypeSyncMessage(typeSummary)}`);
       setSelectedDiscoveredNodeIds((current) => explicitNodeIds.length ? current.filter((nodeId) => !nodeIds.includes(nodeId)) : []);
       await loadDiscoveredConnections();
     } catch (error) {
@@ -459,16 +496,38 @@ export function AutoScanPage() {
 
       <section className="card inventory advanced-card scan-discovered-card">
         <div className="inventory-head scan-discovered-head">
-          <div className="card-title">Discovered Devices <small>{discoveredNodes.length} not ingested</small></div>
+          <div className="card-title">Discovered Devices <small>{discoveredNodes.length} not ingested. Set profiles per device or assign one profile to the selected group.</small></div>
           <div className="scan-bulk-actions">
             <span>{selectedDiscoveredCount} selected</span>
             <button className="plain-button" onClick={() => setSelectedDiscoveredNodeIds(discoveredNodes.map((node) => node.id))} disabled={!discoveredNodes.length || allDiscoveredSelected}>Select all</button>
             <button className="plain-button" onClick={() => setSelectedDiscoveredNodeIds([])} disabled={!selectedDiscoveredCount}>Clear</button>
+            <select
+              className="scan-bulk-profile"
+              aria-label="Assign SNMP profile to selected devices"
+              value=""
+              disabled={ingesting || !selectedDiscoveredCount}
+              onChange={(event) => assignCredentialToSelectedNodes('snmp_credential_id', event.target.value)}
+            >
+              <option value="" disabled>Assign SNMP profile</option>
+              <option value="default">Use scan default</option>
+              {snmpProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+            </select>
+            <select
+              className="scan-bulk-profile"
+              aria-label="Assign SSH profile to selected devices"
+              value=""
+              disabled={ingesting || !selectedDiscoveredCount}
+              onChange={(event) => assignCredentialToSelectedNodes('ssh_credential_id', event.target.value)}
+            >
+              <option value="" disabled>Assign SSH profile</option>
+              <option value="default">Use scan default</option>
+              {sshProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}{profile.username ? ` (${profile.username})` : ''}</option>)}
+            </select>
             <button className="plain-button" onClick={() => ingestDiscoveredDevices(false)} disabled={ingesting || !selectedDiscoveredCount}>
               <Plus size={14} /> {ingesting ? 'Working...' : 'Ingest'}
             </button>
             <button className="plain-button" onClick={() => ingestDiscoveredDevices(true)} disabled={ingesting || !selectedDiscoveredCount}>
-              <RefreshCw size={14} /> Full scan + ingest
+              <RefreshCw size={14} /> Full scan + neighbors
             </button>
           </div>
         </div>
@@ -491,12 +550,14 @@ export function AutoScanPage() {
                 <th>STATUS</th>
                 <th>SITE</th>
                 <th>MAP IDENTITY</th>
+                <th>SNMP PROFILE</th>
+                <th>SSH PROFILE</th>
                 <th>ACTIONS</th>
               </tr>
             </thead>
             <tbody>
               {!discoveredNodes.length ? (
-                <tr><td colSpan={8} className="empty">{topologyLoading ? 'Loading discovered devices...' : 'No not-ingested devices found. Run Auto Scan with SNMP neighbor discovery enabled.'}</td></tr>
+                <tr><td colSpan={10} className="empty">{topologyLoading ? 'Loading discovered devices...' : 'No not-ingested devices found. Run Auto Scan with SNMP neighbor discovery enabled.'}</td></tr>
               ) : discoveredNodes.map((node) => {
                 const selected = selectedDiscoveredNodeIds.includes(node.id);
                 return (
@@ -520,6 +581,26 @@ export function AutoScanPage() {
                     <td><span className="status planned">{node.ingest_status || node.status || 'Not ingested'}</span></td>
                     <td>{node.site || '-'}</td>
                     <td>{node.id}</td>
+                    <td className="scan-profile-cell" onClick={(event) => event.stopPropagation()}>
+                      <select
+                        aria-label={`SNMP profile for ${node.name || node.ip || node.id}`}
+                        value={nodeCredentialSelections[node.id]?.snmp_credential_id || ''}
+                        onChange={(event) => updateNodeCredentialSelection(node.id, 'snmp_credential_id', event.target.value)}
+                      >
+                        <option value="">Use scan default</option>
+                        {snmpProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                      </select>
+                    </td>
+                    <td className="scan-profile-cell" onClick={(event) => event.stopPropagation()}>
+                      <select
+                        aria-label={`SSH profile for ${node.name || node.ip || node.id}`}
+                        value={nodeCredentialSelections[node.id]?.ssh_credential_id || ''}
+                        onChange={(event) => updateNodeCredentialSelection(node.id, 'ssh_credential_id', event.target.value)}
+                      >
+                        <option value="">Use scan default</option>
+                        {sshProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}{profile.username ? ` (${profile.username})` : ''}</option>)}
+                      </select>
+                    </td>
                     <td className="scan-row-actions">
                       <button
                         type="button"
@@ -536,13 +617,13 @@ export function AutoScanPage() {
                         type="button"
                         className="row-action"
                         disabled={ingesting || !node.ip}
-                        title={node.ip ? 'Full scan this device and ingest it' : 'Full scan requires a management IP'}
+                        title={node.ip ? 'Full scan this device, then detect and scan its direct CDP/LLDP neighbors' : 'Full scan requires a management IP'}
                         onClick={(event) => {
                           event.stopPropagation();
                           ingestDiscoveredDevices(true, [node.id]);
                         }}
                       >
-                        Full scan
+                        Full scan + neighbors
                       </button>
                     </td>
                   </tr>

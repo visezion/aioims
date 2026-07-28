@@ -3,13 +3,13 @@ import cytoscape, { type Core, type ElementDefinition } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import { Activity, Cable, CircleAlert, Download, GitBranch, Layers, Maximize2, Minus, Network, Plus, RefreshCw, RotateCcw, Save, Search, X } from 'lucide-react';
 
-cytoscape.use(fcose);
-
 const api = 'http://127.0.0.1:8001/api/v1';
 const TOPOLOGY_LAYOUT_KEY = 'aims-topology-static-layout-v1';
 const TOPOLOGY_WIDTH = 2600;
 const TOPOLOGY_HEIGHT = 1500;
 const DEFAULT_VIEWBOX: ViewBox = { x: 0, y: 0, width: 1100, height: 620 };
+
+cytoscape.use(fcose);
 
 type LayoutMode = 'dynamic' | 'static';
 type TopologyNode = {
@@ -1336,6 +1336,7 @@ function seedLayout(nodes: GraphNode[]) {
   const positions: Record<string, { x: number; y: number }> = {};
   const sorted = [...nodes].sort((a, b) => b.degree - a.degree || a.id.localeCompare(b.id));
   const hubCount = Math.max(1, Math.min(18, Math.ceil(Math.sqrt(Math.max(sorted.length, 1)))));
+
   sorted.forEach((node, index) => {
     const hub = index < hubCount;
     const ringIndex = hub ? index : index - hubCount;
@@ -1347,6 +1348,7 @@ function seedLayout(nodes: GraphNode[]) {
       y: clamp(centerY + Math.sin(angle) * radius, 45, height - 45),
     };
   });
+
   return positions;
 }
 
