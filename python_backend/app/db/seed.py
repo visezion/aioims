@@ -1,4 +1,5 @@
 import os
+import secrets
 
 from app.db.session import SessionLocal
 from app.models.app_config import AppConfig
@@ -12,7 +13,11 @@ def seed_data() -> None:
     db = SessionLocal()
     try:
         if db.query(User).count() == 0:
-            db.add(User(email='admin@aims.local', password_hash=get_password_hash('ChangeMe123!'), full_name='System Admin'))
+            bootstrap_password = os.getenv("AIMS_BOOTSTRAP_ADMIN_PASSWORD", "").strip() or secrets.token_urlsafe(18)
+            if not os.getenv("AIMS_BOOTSTRAP_ADMIN_PASSWORD"):
+                print("AIMS created the initial admin account. Set AIMS_BOOTSTRAP_ADMIN_PASSWORD before first start to choose its password.")
+                print(f"Initial admin password: {bootstrap_password}")
+            db.add(User(email='admin@aims.local', password_hash=get_password_hash(bootstrap_password), full_name='System Admin'))
         seed_demo_data = os.getenv("AIMS_SEED_DEMO_DATA", "").strip().lower() in {"1", "true", "yes", "on"}
         if seed_demo_data and db.query(Site).count() == 0:
             db.add_all([

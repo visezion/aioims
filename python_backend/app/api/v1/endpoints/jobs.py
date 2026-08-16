@@ -5,9 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_db, require_permission
 from app.models.job import Job
 from app.models.user import User
+from app.services.jobs import request_job_cancellation, retry_job
 
 router = APIRouter()
 
@@ -20,7 +21,7 @@ def list_jobs(
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=25, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("network:read")),
 ):
     query = db.query(Job)
     if q:
@@ -50,10 +51,31 @@ def list_jobs(
 
 
 @router.get("/{job_id}", response_model=dict)
-def get_job(job_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_job(job_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_permission("network:read"))):
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    return {"message": "ok", "data": _serialize_job(job)}
+
+
+@router.post("/{job_id}/cancel", response_model=dict)
+def cancel_job(job_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_permission("network:operate"))):
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    request_job_cancellation(db, job)
+    return {"message": "ok", "data": _serialize_job(job)}
+
+
+@router.post("/{job_id}/retry", response_model=dict)
+def retry_existing_job(job_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_permission("network:operate"))):
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    try:
+        retry_job(db, job)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return {"message": "ok", "data": _serialize_job(job)}
 
 
@@ -72,6 +94,11 @@ def _serialize_job(job: Job) -> dict:
         "finished_at": _dt(job.finished_at),
         "created_at": _dt(job.created_at),
         "updated_at": _dt(job.updated_at),
+        "attempts": job.attempts,
+        "max_attempts": job.max_attempts,
+        "worker_id": job.worker_id,
+        "heartbeat_at": _dt(job.heartbeat_at),
+        "cancel_requested": bool(job.cancel_requested),
     }
 
 

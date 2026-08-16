@@ -194,7 +194,7 @@ type BulkEditForm = {
   tags: string;
 };
 
-const api = 'http://127.0.0.1:8001/api/v1';
+const api = `${window.location.protocol}//${window.location.hostname}:8001/api/v1`;
 const CREATE_NEW_VALUE = '__new__';
 const CLEAR_VALUE = '__clear__';
 const DEVICE_RACK_UNITS_KEY = 'aims-device-rack-units';
@@ -324,7 +324,7 @@ export function AdvancedDeviceInventory() {
     const response = await fetch(`${api}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@aims.local', password: 'ChangeMe123!' }),
+      body: JSON.stringify({ email: '', password: '' }),
     });
     const json = await response.json();
     if (!response.ok || !json.data?.token) throw new Error(json.message || 'Unable to authenticate to the API.');
@@ -367,7 +367,6 @@ export function AdvancedDeviceInventory() {
       if (!response.ok) throw new Error(json.detail || json.message || 'Unable to save component assignment.');
     };
     await saveRows(auth);
-    localStorage.setItem('aims-room-components', JSON.stringify(rows));
     window.dispatchEvent(new CustomEvent('aims:room-components-changed'));
   };
 
@@ -2337,19 +2336,12 @@ function uniqueRackRoomForDevice(device: Device, racks: InfrastructurePlacementR
 }
 
 function loadSavedRackUnits() {
-  try {
-    const value = JSON.parse(localStorage.getItem(DEVICE_RACK_UNITS_KEY) || '{}');
-    return value && typeof value === 'object' ? value as Record<string, number> : {};
-  } catch {
-    return {};
-  }
+  return {} as Record<string, number>;
 }
 
 function saveDeviceRackUnits(deviceId: number | string, rackUnits: number) {
-  const units = Math.max(1, Math.min(52, Number(rackUnits || 1) || 1));
-  const saved = loadSavedRackUnits();
-  saved[String(deviceId)] = units;
-  localStorage.setItem(DEVICE_RACK_UNITS_KEY, JSON.stringify(saved));
+  void deviceId;
+  void rackUnits;
 }
 
 function mergeSavedRackUnits(devices: Device[]) {
@@ -2499,33 +2491,12 @@ function formToPayload(form: DeviceForm, deviceTypes: DeviceTypeRecord[] = []) {
 }
 
 function loadInfrastructurePlacementRecords(resource: 'Sites' | 'Locations' | 'Racks'): InfrastructurePlacementRecord[] {
-  try {
-    const rows = JSON.parse(localStorage.getItem(`aims-infrastructure-${resource}`) || '[]');
-    if (!Array.isArray(rows)) return [];
-    return rows
-      .map((row) => ({
-        id: String(row?.id || ''),
-        name: String(row?.name || '').trim(),
-        site: String(row?.site || '').trim(),
-        location: String(row?.location || '').trim(),
-        region: String(row?.region || row?.room || '').trim(),
-        room: String(row?.room || row?.region || '').trim(),
-        rooms: typeof row?.rooms === 'number' || typeof row?.rooms === 'string' ? row.rooms : null,
-        roomNames: Array.isArray(row?.roomNames) ? (row.roomNames as unknown[]).map((room) => String(room || '').trim()).filter(Boolean) : [],
-        status: String(row?.status || '').trim(),
-        role: String(row?.role || '').trim(),
-        units: Number(row?.units || 0) || undefined,
-        lastUpdated: String(row?.lastUpdated || '').trim(),
-      }))
-      .filter((row) => row.name);
-  } catch {
-    return [];
-  }
+  void resource;
+  return [];
 }
 
 function saveInfrastructurePlacementRecords(resource: 'Sites' | 'Locations' | 'Racks', rows: InfrastructurePlacementRecord[], syncBackend = true) {
   const normalized = normalizeInfrastructurePlacementRecords(resource, rows);
-  localStorage.setItem(`aims-infrastructure-${resource}`, JSON.stringify(normalized));
   window.dispatchEvent(new Event(`aims:infrastructure-${resource.toLowerCase()}-changed`));
   if (syncBackend) void syncInfrastructurePlacementRecords(resource, normalized);
 }
@@ -2534,7 +2505,7 @@ async function loadBackendInfrastructurePlacementRecords(auth: string, resource:
   const response = await fetch(`${api}/infrastructure/${encodeURIComponent(resource)}`, { headers: { Authorization: `Bearer ${auth}` } });
   if (response.status === 401) return 'unauthorized';
   const json = await response.json().catch(() => ({}));
-  if (!response.ok || !Array.isArray(json.data?.records)) return loadInfrastructurePlacementRecords(resource);
+  if (!response.ok || !Array.isArray(json.data?.records)) return [];
   return normalizeInfrastructurePlacementRecords(resource, json.data.records as InfrastructurePlacementRecord[]);
 }
 
@@ -2627,7 +2598,7 @@ async function ensurePlacementApiToken(force = false) {
   const response = await fetch(`${api}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@aims.local', password: 'ChangeMe123!' }),
+    body: JSON.stringify({ email: '', password: '' }),
   });
   const json = await response.json();
   if (!response.ok || !json.data?.token) throw new Error(json.message || 'Unable to authenticate to the API.');

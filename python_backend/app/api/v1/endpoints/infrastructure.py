@@ -7,7 +7,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 import xml.etree.ElementTree as ET
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -32,7 +32,7 @@ except Exception:  # pragma: no cover - optional runtime dependency
 
 router = APIRouter()
 
-RESOURCE_NAMES = {"Sites", "Locations", "Rooms", "Components", "Racks", "VLANs", "IP Addresses", "Prefixes", "VRFs"}
+RESOURCE_NAMES = {"Sites", "Locations", "Rooms", "Components", "Racks", "Device Types", "VLANs", "IP Addresses", "Prefixes", "VRFs"}
 RESOURCE_ALIASES = {
     "site": "Sites",
     "location": "Locations",
@@ -40,6 +40,8 @@ RESOURCE_ALIASES = {
     "component": "Components",
     "components": "Components",
     "rack": "Racks",
+    "device type": "Device Types",
+    "device types": "Device Types",
     "vlan": "VLANs",
     "vlans": "VLANs",
     "ip address": "IP Addresses",
@@ -737,11 +739,27 @@ def _regex_first(output: str, pattern: str) -> str:
 
 
 def _fetch_text(url: str) -> str:
-    if not re.match(r"^https?://", url, re.IGNORECASE):
+    if len(url) > 2048:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Component endpoint is too long")
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only http:// and https:// component test endpoints are supported")
+    if parsed.username or parsed.password:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Component endpoints must not include URL credentials")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Component endpoint port is invalid") from exc
+    if port is not None and not 1 <= port <= 65535:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Component endpoint port is invalid")
+
+    class _NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, request, fp, code, msg, headers, newurl):
+            return None
+
     request = Request(url, headers={"User-Agent": "AIMS component tester"})
     try:
-        with urlopen(request, timeout=8) as response:
+        with build_opener(_NoRedirect()).open(request, timeout=8) as response:
             raw = response.read(1_000_000)
             return raw.decode(response.headers.get_content_charset() or "utf-8", errors="replace")
     except HTTPError as exc:

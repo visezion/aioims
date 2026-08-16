@@ -104,19 +104,14 @@ const defaultRules: EnvironmentThresholdRule[] = [
     updated_at: 'default',
   },
 ];
+let cachedRules: EnvironmentThresholdRule[] = defaultRules;
 
 export function loadEnvironmentThresholdRules(): EnvironmentThresholdRule[] {
-  try {
-    const rows = JSON.parse(localStorage.getItem(ENVIRONMENT_THRESHOLDS_STORAGE_KEY) || '[]');
-    if (!Array.isArray(rows) || !rows.length) return defaultRules;
-    return rows.map(normalizeRule).filter(Boolean) as EnvironmentThresholdRule[];
-  } catch {
-    return defaultRules;
-  }
+  return cachedRules;
 }
 
 export function saveEnvironmentThresholdRules(rows: EnvironmentThresholdRule[]) {
-  localStorage.setItem(ENVIRONMENT_THRESHOLDS_STORAGE_KEY, JSON.stringify(rows.map(normalizeRule).filter(Boolean)));
+  cachedRules = rows.map(normalizeRule).filter(Boolean) as EnvironmentThresholdRule[];
   window.dispatchEvent(new Event('aims:environment-thresholds-changed'));
 }
 

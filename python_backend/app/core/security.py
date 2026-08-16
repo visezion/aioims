@@ -30,16 +30,16 @@ def get_password_hash(password: str) -> str:
     return f"pbkdf2_sha256${salt.hex()}${derived.hex()}"
 
 
-def create_access_token(subject: str, expires_delta: timedelta | None = None) -> str:
+def create_access_token(subject: str, expires_delta: timedelta | None = None, token_version: int = 0, role: str = "operator") -> str:
     if expires_delta is None:
         expires_delta = timedelta(minutes=settings.access_token_expire_minutes)
-    to_encode = {"sub": subject, "exp": datetime.now(timezone.utc) + expires_delta}
+    to_encode = {"sub": subject, "exp": datetime.now(timezone.utc) + expires_delta, "tv": token_version, "role": role}
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
 
-def decode_access_token(token: str) -> str:
+def decode_access_token(token: str) -> dict[str, Any]:
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
     except JWTError as exc:
         raise ValueError("Invalid token") from exc
-    return str(payload.get("sub", ""))
+    return {"subject": str(payload.get("sub", "")), "token_version": int(payload.get("tv", 0)), "role": str(payload.get("role", "operator"))}

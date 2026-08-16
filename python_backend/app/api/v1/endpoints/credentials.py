@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_db, require_permission
 from app.core.secret_store import encrypt_secret
 from app.models.app_config import AppConfig
 from app.models.audit_log import AuditLog
@@ -21,7 +21,7 @@ VALID_TYPES = {"snmp_v2c", "ssh"}
 def list_credentials(
     credential_type: str = Query(default="", alias="type"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("configuration:read")),
 ):
     query = db.query(CredentialProfile)
     if credential_type:
@@ -34,7 +34,7 @@ def list_credentials(
 def create_credential(
     payload: CredentialProfileCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("configuration:write")),
 ):
     values = _validated_values(payload.model_dump(exclude_unset=True), creating=True)
     _validate_unique_name(db, values["name"])
@@ -52,7 +52,7 @@ def update_credential(
     credential_id: int,
     payload: CredentialProfileUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("configuration:write")),
 ):
     row = db.query(CredentialProfile).filter(CredentialProfile.id == credential_id).first()
     if not row:
@@ -75,7 +75,7 @@ def update_credential(
 def delete_credential(
     credential_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("configuration:write")),
 ):
     row = db.query(CredentialProfile).filter(CredentialProfile.id == credential_id).first()
     if not row:

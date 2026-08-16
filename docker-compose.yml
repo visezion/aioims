@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: aims
+      POSTGRES_USER: aims
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - aims-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aims -d aims"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql+psycopg://aims:${POSTGRES_PASSWORD}@postgres:5432/aims
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
+      AIMS_BOOTSTRAP_ADMIN_PASSWORD: ${AIMS_BOOTSTRAP_ADMIN_PASSWORD:?set AIMS_BOOTSTRAP_ADMIN_PASSWORD}
+      CORS_ORIGINS: http://localhost:4173
+      AIMS_SCHEMA_MODE: migrations
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "4173:4173"
+    depends_on:
+      - api
+
+volumes:
+  aims-postgres:

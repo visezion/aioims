@@ -3,7 +3,7 @@ import { Activity, BarChart3, Building2, Gauge, Globe2, Move, Plus, RadioTower, 
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
 import { SearchableSelect } from './SearchableSelect';
 
-const api = 'http://127.0.0.1:8001/api/v1';
+const api = `${window.location.protocol}//${window.location.hostname}:8001/api/v1`;
 
 type Device = {
   id: number | string;
@@ -335,7 +335,7 @@ export function WirelessPage({ initialView = 'monitoring' }: { initialView?: Wir
     const response = await fetch(`${api}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@aims.local', password: 'ChangeMe123!' }),
+      body: JSON.stringify({ email: '', password: '' }),
     });
     const json = await response.json();
     if (!response.ok || !json.data?.token) throw new Error(json.message || 'Unable to authenticate.');
@@ -3104,7 +3104,6 @@ async function ensureSharedInfrastructureLocation(auth: string, locationName: st
       role: 'Wireless location',
       lastUpdated: new Date().toISOString(),
     } as InfrastructureLocationRecord, ...current];
-  localStorage.setItem('aims-infrastructure-Locations', JSON.stringify(next));
   window.dispatchEvent(new Event('aims:infrastructure-locations-changed'));
   const saved = await saveInfrastructureLocationsApi(auth, next);
   if (saved === 'unauthorized') return 'unauthorized';
@@ -3339,35 +3338,11 @@ function siteName(device: Device) {
 }
 
 function loadInfrastructureSites(): InfrastructureSiteRecord[] {
-  try {
-    const rows = JSON.parse(localStorage.getItem('aims-infrastructure-Sites') || '[]');
-    if (!Array.isArray(rows)) return [];
-    return rows
-      .map((row) => ({
-        name: String(row?.name || '').trim(),
-        status: String(row?.status || '').trim(),
-      }))
-      .filter((row) => row.name);
-  } catch {
-    return [];
-  }
+  return [];
 }
 
 function loadInfrastructureLocations(): InfrastructureLocationRecord[] {
-  try {
-    const rows = JSON.parse(localStorage.getItem('aims-infrastructure-Locations') || '[]');
-    if (!Array.isArray(rows)) return [];
-    return rows
-      .map((row) => ({
-        name: String(row?.name || '').trim(),
-        site: String(row?.site || '').trim(),
-        status: String(row?.status || '').trim(),
-        source: 'local',
-      }))
-      .filter((row) => row.name);
-  } catch {
-    return [];
-  }
+  return [];
 }
 
 function mergeInfrastructureLocations(primary: InfrastructureLocationRecord[], fallback: InfrastructureLocationRecord[]) {

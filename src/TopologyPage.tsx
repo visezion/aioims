@@ -3,7 +3,7 @@ import cytoscape, { type Core, type ElementDefinition } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import { Activity, Cable, CircleAlert, Download, GitBranch, Layers, Maximize2, Minus, Network, Plus, RefreshCw, RotateCcw, Save, Search, X } from 'lucide-react';
 
-const api = 'http://127.0.0.1:8001/api/v1';
+const api = `${window.location.protocol}//${window.location.hostname}:8001/api/v1`;
 const TOPOLOGY_LAYOUT_KEY = 'aims-topology-static-layout-v1';
 const TOPOLOGY_WIDTH = 2600;
 const TOPOLOGY_HEIGHT = 1500;
@@ -101,7 +101,7 @@ export function TopologyPage() {
     const response = await fetch(`${api}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@aims.local', password: 'ChangeMe123!' }),
+      body: JSON.stringify({ email: '', password: '' }),
     });
     const json = await response.json();
     if (!response.ok || !json.data?.token) throw new Error(json.message || 'Unable to authenticate.');
@@ -477,7 +477,7 @@ export function TopologyPage() {
         <div className="topology-toolbar">
           <div>
             <div className="card-title">Cable Topology <small>{graph.nodes.length} nodes shown</small></div>
-            <span>Devices are merged by management IP first, then inventory ID or neighbor name.</span>
+            <span>Static shows a clean connected path. Dynamic shows every discovered neighbor link.</span>
           </div>
           <div className="topology-tools">
             <div className="segmented-control">
@@ -1200,12 +1200,49 @@ function graphLayout(nodes: GraphNode[], links: TopologyLink[], mode: LayoutMode
   const visibleNodes = nodes.filter((node) => visibleIds.has(node.id)).slice(0, 320);
   const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
   const visibleLinks = links.filter((link) => Boolean(link.source && link.target && visibleNodeIds.has(link.source) && visibleNodeIds.has(link.target)));
-  const positions = mode === 'dynamic' ? seedLayout(visibleNodes) : staticLayout(visibleNodes, visibleLinks, manualPositions);
+  const layoutLinks = mode === 'static' ? topologyTreeLinks(visibleNodes, visibleLinks) : visibleLinks;
+  const positions = mode === 'dynamic' ? seedLayout(visibleNodes) : staticLayout(visibleNodes, layoutLinks, manualPositions);
   return {
     nodes: visibleNodes,
-    links: visibleLinks.filter((link) => Boolean(link.source && link.target && positions[link.source] && positions[link.target])),
+    links: layoutLinks.filter((link) => Boolean(link.source && link.target && positions[link.source] && positions[link.target])),
     positions,
   };
+}
+
+function topologyTreeLinks(nodes: GraphNode[], links: TopologyLink[]) {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const parent = new Map(nodes.map((node) => [node.id, node.id]));
+  const find = (id: string): string => {
+    const root = parent.get(id) || id;
+    if (root === id) return root;
+    const resolved = find(root);
+    parent.set(id, resolved);
+    return resolved;
+  };
+  const connect = (first: string, second: string) => {
+    const firstRoot = find(first);
+    const secondRoot = find(second);
+    if (firstRoot === secondRoot) return false;
+    parent.set(secondRoot, firstRoot);
+    return true;
+  };
+
+  // A network can contain redundant links and loops, which cannot be drawn
+  // without crossings. Keep one evidence-backed path between each device pair.
+  return [...links]
+    .filter((link): link is TopologyLink & { source: string; target: string } => Boolean(link.source && link.target))
+    .sort((left, right) => {
+      const leftSource = nodeById.get(left.source)!;
+      const leftTarget = nodeById.get(left.target)!;
+      const rightSource = nodeById.get(right.source)!;
+      const rightTarget = nodeById.get(right.target)!;
+      const leftTierDistance = Math.abs(topologyTier(leftSource) - topologyTier(leftTarget));
+      const rightTierDistance = Math.abs(topologyTier(rightSource) - topologyTier(rightTarget));
+      const leftScore = leftTierDistance * 100 + leftSource.degree + leftTarget.degree;
+      const rightScore = rightTierDistance * 100 + rightSource.degree + rightTarget.degree;
+      return rightScore - leftScore || left.id - right.id;
+    })
+    .filter((link) => connect(link.source, link.target));
 }
 
 function staticLayout(nodes: GraphNode[], links: TopologyLink[], manualPositions: PositionMap) {

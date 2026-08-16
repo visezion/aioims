@@ -11,7 +11,7 @@ import {
   saveEnvironmentThresholdRules,
 } from './environmentThresholds';
 
-const api = 'http://127.0.0.1:8001/api/v1';
+const api = `${window.location.protocol}//${window.location.hostname}:8001/api/v1`;
 
 type Setting = { key: string; value: string; configured: boolean; description: string };
 type CredentialProfile = {
@@ -71,7 +71,7 @@ export function SystemConfigurationPage() {
     const response = await fetch(`${api}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'admin@aims.local', password: 'ChangeMe123!' }),
+      body: JSON.stringify({ email: '', password: '' }),
     });
     const json = await response.json();
     if (!response.ok || !json.data?.token) throw new Error(json.message || 'Unable to authenticate.');

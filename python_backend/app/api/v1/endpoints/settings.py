@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_db, require_permission
 from app.models.app_config import AppConfig
 from app.models.audit_log import AuditLog
 from app.models.credential_profile import CredentialProfile
@@ -65,14 +65,14 @@ SENSITIVE_SETTINGS = {"snmp_community"}
 
 
 @router.get("", response_model=dict)
-def list_settings(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def list_settings(db: Session = Depends(get_db), current_user: User = Depends(require_permission("configuration:read"))):
     _ensure_defaults(db)
     rows = db.query(AppConfig).order_by(AppConfig.key.asc()).all()
     return {"message": "ok", "data": {"data": [_serialize(row) for row in rows]}}
 
 
 @router.get("/{key}", response_model=dict)
-def get_setting(key: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_setting(key: str, db: Session = Depends(get_db), current_user: User = Depends(require_permission("configuration:read"))):
     _ensure_defaults(db)
     row = db.query(AppConfig).filter(AppConfig.key == key).first()
     if not row:
@@ -81,7 +81,7 @@ def get_setting(key: str, db: Session = Depends(get_db), current_user: User = De
 
 
 @router.patch("/{key}", response_model=dict)
-def update_setting(key: str, payload: SettingUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def update_setting(key: str, payload: SettingUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_permission("configuration:write"))):
     _ensure_defaults(db)
     row = db.query(AppConfig).filter(AppConfig.key == key).first()
     if not row:

@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from sqlalchemy import or_
@@ -19,7 +19,7 @@ from app.models.user import User
 from app.services.config_collection import ConfigurationResult, SshConfigurationCollector
 from app.services.config_backup import create_config_backup, list_config_backups
 from app.services.discovery import NetworkDiscoveryService
-from app.services.jobs import complete_job, start_job, update_job_progress
+from app.services.jobs import complete_job, recover_stale_jobs, request_job_cancellation, start_job, update_job_progress
 from app.services.snmp import SnmpValue, _decode_port_bitmap
 
 
@@ -797,6 +797,33 @@ Interface: 192.168.220.1 --- 0x12
                     cleanup.close()
             writer.close()
             reader.close()
+
+    def test_job_cancellation_and_stale_recovery_are_persistent(self):
+        init_db()
+        db = SessionLocal()
+        job_ids = []
+        try:
+            cancelled = start_job(db, "test_cancel", "unit-test", "tester")
+            job_ids.append(cancelled.id)
+            request_job_cancellation(db, cancelled)
+            db.expire_all()
+            self.assertEqual(db.query(Job).filter(Job.id == cancelled.id).one().cancel_requested, 1)
+
+            stale = start_job(db, "test_stale", "unit-test", "tester")
+            job_ids.append(stale.id)
+            stale.heartbeat_at = datetime.now(timezone.utc) - timedelta(seconds=600)
+            stale.attempts = stale.max_attempts
+            db.commit()
+            self.assertEqual(recover_stale_jobs(db, stale_after_seconds=300), 1)
+            db.expire_all()
+            recovered = db.query(Job).filter(Job.id == stale.id).one()
+            self.assertEqual(recovered.status, "failed")
+            self.assertIn("heartbeat", recovered.error.lower())
+        finally:
+            for job_id in job_ids:
+                db.query(Job).filter(Job.id == job_id).delete(synchronize_session=False)
+            db.commit()
+            db.close()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY python_backend/requirements.txt /app/python_backend/requirements.txt
+RUN pip install --no-cache-dir -r /app/python_backend/requirements.txt
+COPY . /app
+
+ENV PYTHONPATH=/app/python_backend
+ENV AIMS_SCHEMA_MODE=migrations
+EXPOSE 8001
+CMD ["sh", "-c", "alembic -c alembic.ini upgrade head && python python_backend/server.py --host 0.0.0.0 --port 8001"]

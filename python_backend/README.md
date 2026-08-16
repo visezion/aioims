@@ -20,7 +20,11 @@ python python_backend/server.py --reload
 ```
 
 ## API base URL
-The frontend expects the service at `http://127.0.0.1:8001/api/v1`.
+The frontend automatically connects to `http://<server-ip>:8001/api/v1` using the hostname from which the UI was opened.
+
+## First start security
+
+Set `AIMS_BOOTSTRAP_ADMIN_PASSWORD` before the first start to create the initial `admin@aims.local` account. If it is not set, the API generates a one-time password and prints it to the local server console. Set `CORS_ORIGINS` for deployed frontend origins and optionally set `SECRET_KEY`; otherwise AIMS persists a generated local key in `.aims_secret_key`.
 
 ## Main endpoints
 - `POST /api/v1/auth/login`

@@ -39,7 +39,7 @@ import { DeviceTypeRecord, deviceTypeLabel, loadDeviceTypes } from './DeviceType
 import { EnvironmentMetric, EnvironmentThresholdContext, environmentThresholdTone } from './environmentThresholds';
 import { SearchableSelect } from './SearchableSelect';
 
-const api = 'http://127.0.0.1:8001/api/v1';
+const api = `${window.location.protocol}//${window.location.hostname}:8001/api/v1`;
 const DEVICE_RACK_UNITS_KEY = 'aims-device-rack-units';
 const DEFAULT_ROOM_NAME = 'Network Room';
 export const INFRASTRUCTURE_RESOURCES = ['Sites', 'Locations', 'Rooms', 'Racks', 'VLANs', 'IP Addresses', 'Prefixes', 'VRFs'] as const;
@@ -382,15 +382,10 @@ function makeId(resource: InfrastructureResourceName) {
 }
 
 function loadRecords(resource: InfrastructureResourceName): InfraRecord[] {
-  try {
-    const saved = localStorage.getItem(storageKey(resource));
-    const rows = saved ? JSON.parse(saved) : seedData[resource];
-    const cleaned = resource === 'VRFs' ? removeDemoVrfSeeds(rows) : rows;
-    return resource === 'Locations' ? normalizeRecordsForResource(resource, cleaned) : cleaned;
-  } catch {
-    const rows = seedData[resource];
-    return resource === 'Locations' ? normalizeRecordsForResource(resource, rows) : rows;
-  }
+  // Persisted infrastructure records are loaded from the API. Returning an
+  // empty initial state prevents stale browser data from becoming a shadow
+  // source of truth while the request is in flight.
+  return [];
 }
 
 function removeDemoVrfSeeds(records: InfraRecord[]) {
@@ -448,7 +443,6 @@ function mergeLocationRecords(existing: InfraRecord, incoming: InfraRecord): Inf
 }
 
 function saveRecords(resource: InfrastructureResourceName, records: InfraRecord[]) {
-  localStorage.setItem(storageKey(resource), JSON.stringify(normalizeRecordsForResource(resource, records)));
   window.dispatchEvent(new Event(`aims:infrastructure-${resource.toLowerCase().replace(/\s+/g, '-')}-changed`));
   if (resource === 'Locations') window.dispatchEvent(new Event('aims:infrastructure-locations-changed'));
   if (resource === 'Racks') window.dispatchEvent(new Event('aims:infrastructure-racks-changed'));
@@ -456,23 +450,19 @@ function saveRecords(resource: InfrastructureResourceName, records: InfraRecord[
 }
 
 function loadHiddenRecordKeys(resource: InfrastructureResourceName): string[] {
-  try {
-    const saved = JSON.parse(localStorage.getItem(hiddenRecordsKey(resource)) || '[]');
-    return Array.isArray(saved) ? saved.filter((key) => typeof key === 'string') : [];
-  } catch {
-    return [];
-  }
+  return [];
 }
 
 function saveHiddenRecordKeys(resource: InfrastructureResourceName, keys: string[]) {
-  localStorage.setItem(hiddenRecordsKey(resource), JSON.stringify([...new Set(keys)]));
+  void resource;
+  void keys;
 }
 
 async function loadBackendInfrastructure(resource: InfrastructureResourceName) {
   const auth = await ensureApiToken();
   const response = await fetch(`${api}/infrastructure/${encodeURIComponent(resource)}`, { headers: { Authorization: `Bearer ${auth}` } });
   const json = await response.json();
-  if (response.status === 404) return { configured: false, records: [] as InfraRecord[], hiddenKeys: loadHiddenRecordKeys(resource), unavailable: true };
+  if (response.status === 404) return { configured: false, records: [] as InfraRecord[], hiddenKeys: [], unavailable: true };
   if (!response.ok) throw new Error(json.detail || json.message || 'Unable to load infrastructure records from backend.');
   return {
     configured: Boolean(json.data?.configured),
@@ -542,7 +532,7 @@ async function ensureApiToken(force = false) {
   const response = await fetch(`${api}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@aims.local', password: 'ChangeMe123!' }),
+    body: JSON.stringify({ email: '', password: '' }),
   });
   const json = await response.json();
   if (!response.ok || !json.data?.token) throw new Error(json.message || 'Unable to authenticate to the API.');
@@ -624,12 +614,7 @@ async function patchDeviceAndReload(deviceId: number, payload: Record<string, un
 }
 
 function loadSavedRackUnits() {
-  try {
-    const value = JSON.parse(localStorage.getItem(DEVICE_RACK_UNITS_KEY) || '{}');
-    return value && typeof value === 'object' ? value as Record<string, number> : {};
-  } catch {
-    return {};
-  }
+  return {} as Record<string, number>;
 }
 
 function mergeSavedRackUnits(devices: InventoryDevice[]) {
@@ -1333,11 +1318,9 @@ export function InfrastructurePage({ resource }: { resource: InfrastructureResou
         if (snapshot.configured) {
           const backendRows = resource === 'VRFs' ? removeDemoVrfSeeds(snapshot.records) : snapshot.records;
           const backendRecords = resource === 'Locations' ? normalizeRecordsForResource('Locations', backendRows) : backendRows;
-          localStorage.setItem(storageKey(resource), JSON.stringify(backendRecords));
           setRecords(backendRecords);
           setPlacementRecords((current) => ({ ...current, [resource]: backendRecords }));
         }
-        localStorage.setItem(hiddenRecordsKey(resource), JSON.stringify(snapshot.hiddenKeys));
         setHiddenRecordKeys(snapshot.hiddenKeys);
         setBackendAvailable(!snapshot.unavailable);
         setBackendReady(true);
@@ -1373,7 +1356,6 @@ export function InfrastructurePage({ resource }: { resource: InfrastructureResou
             if (!snapshot.configured) return;
             const backendRows = resourceName === 'VRFs' ? removeDemoVrfSeeds(snapshot.records) : snapshot.records;
             const backendRecords = resourceName === 'Locations' ? normalizeRecordsForResource('Locations', backendRows) : backendRows;
-            localStorage.setItem(storageKey(resourceName), JSON.stringify(backendRecords));
             next[resourceName] = backendRecords;
           });
           return next;
@@ -3906,8 +3888,6 @@ function roomRackVisualClass(value?: string) {
   return 'network';
 }
 
-const ROOM_COMPONENTS_KEY = 'aims-room-components';
-
 type RoomComponent = {
   id: string;
   roomKey: string;
@@ -3978,22 +3958,18 @@ const roomComponentTypeFields: Record<string, string[]> = {
   'CCTV camera': ['IP address', 'Camera type', 'Resolution', 'Recording status', 'Field of view', 'Retention period', 'Connectivity status', 'Last heartbeat'],
   'Circuit breaker': ['Rated current', 'Rated voltage', 'Number of poles', 'Breaker status', 'Protected circuit', 'Connected PDU', 'Trip status', 'Last test date'],
 };
+let cachedRoomComponents: RoomComponent[] = [];
 
 function roomKey(room: InfraRecord) {
   return [room.site, room.location, room.name].map((part) => String(part || '').trim().toLowerCase()).join('|');
 }
 
 function loadAllRoomComponents(): RoomComponent[] {
-  try {
-    const rows = JSON.parse(localStorage.getItem(ROOM_COMPONENTS_KEY) || '[]');
-    return sanitizeRoomComponents(rows);
-  } catch {
-    return [];
-  }
+  return cachedRoomComponents;
 }
 
 function saveAllRoomComponents(rows: RoomComponent[]) {
-  localStorage.setItem(ROOM_COMPONENTS_KEY, JSON.stringify(sanitizeRoomComponents(rows)));
+  cachedRoomComponents = sanitizeRoomComponents(rows);
   window.dispatchEvent(new CustomEvent('aims:room-components-changed'));
 }
 

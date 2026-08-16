@@ -21,9 +21,14 @@ if settings.database_url.startswith("sqlite"):
 
 
 def init_db() -> None:
-    from app.models import app_config, credential_profile, device, device_config_backup, device_link, job, site, audit_log, trace_snapshot, user, wireless_snapshot  # noqa: F401
+    from app.models import alert, app_config, credential_profile, device, device_config_backup, device_link, governance, incident, insight, job, site, audit_log, trace_snapshot, user, wireless_snapshot  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    if not settings.use_schema_migrations:
+        Base.metadata.create_all(bind=engine)
+    else:
+        inspector = inspect(engine)
+        if not inspector.get_table_names():
+            raise RuntimeError("AIMS_SCHEMA_MODE=migrations requires running 'alembic upgrade head' before starting the API")
     _enable_sqlite_wal()
     _add_missing_sqlite_columns()
 
@@ -73,3 +78,27 @@ def _add_missing_sqlite_columns() -> None:
         for name, definition in required.items():
             if name not in existing:
                 connection.execute(text(f"ALTER TABLE devices ADD COLUMN {name} {definition}"))
+    if "users" in inspector.get_table_names():
+        user_columns = {column["name"] for column in inspector.get_columns("users")}
+        with engine.begin() as connection:
+            for name, definition in {
+                "role": "VARCHAR(50) DEFAULT 'administrator'",
+                "token_version": "INTEGER DEFAULT 0",
+                "mfa_enabled": "BOOLEAN DEFAULT 0",
+                "mfa_secret_encrypted": "VARCHAR(512) DEFAULT ''",
+            }.items():
+                if name not in user_columns:
+                    connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
+    if "jobs" in inspector.get_table_names():
+        job_columns = {column["name"] for column in inspector.get_columns("jobs")}
+        with engine.begin() as connection:
+            for name, definition in {
+                "attempts": "INTEGER DEFAULT 0",
+                "max_attempts": "INTEGER DEFAULT 3",
+                "worker_id": "VARCHAR(255) DEFAULT ''",
+                "locked_at": "DATETIME",
+                "heartbeat_at": "DATETIME",
+                "cancel_requested": "INTEGER DEFAULT 0",
+            }.items():
+                if name not in job_columns:
+                    connection.execute(text(f"ALTER TABLE jobs ADD COLUMN {name} {definition}"))

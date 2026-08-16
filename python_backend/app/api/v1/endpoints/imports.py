@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_db, require_permission
 from app.models.audit_log import AuditLog
 from app.models.device import Device
 from app.models.site import Site
@@ -16,7 +16,7 @@ router = APIRouter()
 
 
 @router.post("/devices-import")
-def import_devices(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def import_devices(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(require_permission("inventory:write"))):
     contents = file.file.read().decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(contents))
     created = 0
@@ -104,7 +104,7 @@ def import_devices(file: UploadFile = File(...), db: Session = Depends(get_db), 
 
 
 @router.get("/devices-export")
-def export_devices(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def export_devices(db: Session = Depends(get_db), current_user: User = Depends(require_permission("inventory:read"))):
     devices = db.query(Device).all()
     output = io.StringIO()
     writer = csv.writer(output)

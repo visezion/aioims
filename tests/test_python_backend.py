@@ -65,6 +65,168 @@ class PythonBackendTests(unittest.TestCase):
         self._expect_status('/api/v1/devices/1/terminal', 401, method='POST', payload={'command': 'show version'})
         self._expect_status('/api/v1/protocols/check', 401, method='POST', payload={'target': '127.0.0.1'})
 
+    def test_identity_profile_user_roles_and_token_revocation(self):
+        token = self._login()
+        headers = {'Authorization': f'Bearer {token}'}
+        profile = self._json_request('/api/v1/auth/me', headers=headers)['data']
+        self.assertEqual(profile['email'], 'admin@aims.local')
+        self.assertEqual(profile['role'], 'administrator')
+
+        suffix = uuid.uuid4().hex[:8]
+        email = f'role-test-{suffix}@aims.local'
+        created = self._json_request('/api/v1/users', method='POST', headers=headers, payload={
+            'email': email,
+            'password': 'RoleTestPassword123!',
+            'full_name': 'Role Test User',
+            'role': 'read_only',
+        })['data']
+        self.assertEqual(created['role'], 'read_only')
+        listed = self._json_request('/api/v1/users', headers=headers)['data']
+        self.assertTrue(any(row['email'] == email and row['role'] == 'read_only' for row in listed))
+        updated = self._json_request(f"/api/v1/users/{created['id']}", method='PATCH', headers=headers, payload={'role': 'auditor'})['data']
+        self.assertEqual(updated['role'], 'auditor')
+        auditor_login = self._json_request('/api/v1/auth/login', method='POST', payload={'email': email, 'password': 'RoleTestPassword123!'})
+        auditor_headers = {'Authorization': f"Bearer {auditor_login['data']['token']}"}
+        self._expect_status('/api/v1/credentials', 403, method='POST', headers=auditor_headers, payload={'name': f'Forbidden {suffix}', 'credential_type': 'ssh', 'username': 'readonly', 'secret': 'not-created'})
+        self._json_request(f"/api/v1/users/{created['id']}", method='PATCH', headers=headers, payload={'is_active': False})
+
+        self._json_request('/api/v1/auth/logout', method='POST', headers=headers)
+        self._expect_status('/api/v1/auth/me', 401, headers=headers)
+
+    def test_totp_mfa_setup_confirm_and_login(self):
+        import pyotp
+
+        token = self._login()
+        headers = {'Authorization': f'Bearer {token}'}
+        setup = self._json_request('/api/v1/auth/mfa/setup', method='POST', headers=headers)['data']
+        secret = setup['secret']
+        self.assertFalse(setup['enabled'])
+        code = pyotp.TOTP(secret).now()
+        self._json_request('/api/v1/auth/mfa/confirm', method='POST', headers=headers, payload={'code': code})
+        self._expect_status('/api/v1/auth/me', 401, headers=headers)
+        self._expect_status('/api/v1/auth/login', 401, method='POST', payload={'email': 'admin@aims.local', 'password': 'ChangeMe123!'})
+        login = self._json_request('/api/v1/auth/login', method='POST', payload={'email': 'admin@aims.local', 'password': 'ChangeMe123!', 'mfa_code': pyotp.TOTP(secret).now()})
+        new_headers = {'Authorization': f"Bearer {login['data']['token']}"}
+        self.assertTrue(self._json_request('/api/v1/auth/me', headers=new_headers)['data']['mfa_enabled'])
+        self._json_request('/api/v1/auth/mfa/disable', method='POST', headers=new_headers)
+
+    def test_alert_and_incident_lifecycle(self):
+        from app.db.session import SessionLocal
+        from app.models.alert import Alert
+        from app.models.incident import Incident
+
+        token = self._login()
+        headers = {'Authorization': f'Bearer {token}'}
+        fingerprint = f'api-test-{uuid.uuid4().hex}'
+        alert_id = None
+        incident_id = None
+        try:
+            alert = self._json_request('/api/v1/operations/alerts', method='POST', headers=headers, payload={
+                'fingerprint': fingerprint,
+                'title': 'API lifecycle test alert',
+                'message': 'Synthetic test alert',
+                'severity': 'warning',
+                'source': 'test',
+            })['data']
+            alert_id = alert['id']
+            self.assertEqual(alert['status'], 'open')
+            acknowledged = self._json_request(f'/api/v1/operations/alerts/{alert_id}/acknowledge', method='POST', headers=headers)['data']
+            self.assertEqual(acknowledged['status'], 'acknowledged')
+            resolved = self._json_request(f'/api/v1/operations/alerts/{alert_id}/resolve', method='POST', headers=headers)['data']
+            self.assertEqual(resolved['status'], 'resolved')
+            incident = self._json_request('/api/v1/operations/incidents', method='POST', headers=headers, payload={
+                'title': 'Synthetic incident',
+                'description': 'Lifecycle test',
+                'severity': 'minor',
+                'alert_ids': [alert_id],
+            })['data']
+            incident_id = incident['id']
+            self.assertTrue(incident['number'].startswith('INC-'))
+            updated = self._json_request(f'/api/v1/operations/incidents/{incident_id}', method='PATCH', headers=headers, payload={'status': 'resolved'})['data']
+            self.assertEqual(updated['status'], 'resolved')
+        finally:
+            db = SessionLocal()
+            try:
+                if incident_id:
+                    db.query(Incident).filter(Incident.id == incident_id).delete(synchronize_session=False)
+                if alert_id:
+                    db.query(Alert).filter(Alert.id == alert_id).delete(synchronize_session=False)
+                db.commit()
+            finally:
+                db.close()
+
+    def test_compliance_policy_and_automation_approval_workflow(self):
+        from app.db.session import SessionLocal
+        from app.models.governance import AutomationRequest, CompliancePolicy
+
+        token = self._login()
+        headers = {'Authorization': f'Bearer {token}'}
+        policy_name = f'API Policy {uuid.uuid4().hex[:8]}'
+        policy_id = None
+        request_id = None
+        try:
+            policy = self._json_request('/api/v1/governance/compliance/policies', method='POST', headers=headers, payload={
+                'name': policy_name,
+                'framework': 'CIS',
+                'rules': [{'field': 'snmp_status', 'operator': 'equals', 'value': 'OK'}],
+            })['data']
+            policy_id = policy['id']
+            self.assertEqual(policy['framework'], 'CIS')
+            request = self._json_request('/api/v1/governance/automation/requests', method='POST', headers=headers, payload={
+                'action': 'collect_configuration',
+                'target': 'test-device',
+                'dry_run': True,
+            })['data']
+            request_id = request['id']
+            self.assertEqual(request['status'], 'pending')
+            approved = self._json_request(f"/api/v1/governance/automation/requests/{request_id}/approve", method='POST', headers=headers)['data']
+            self.assertEqual(approved['status'], 'approved')
+        finally:
+            db = SessionLocal()
+            try:
+                if request_id:
+                    db.query(AutomationRequest).filter(AutomationRequest.id == request_id).delete(synchronize_session=False)
+                if policy_id:
+                    db.query(CompliancePolicy).filter(CompliancePolicy.id == policy_id).delete(synchronize_session=False)
+                db.commit()
+            finally:
+                db.close()
+
+    def test_insight_records_for_firmware_vulnerability_and_reports(self):
+        from app.db.session import SessionLocal
+        from app.models.insight import FirmwareRecord, ReportDefinition, VulnerabilityFinding
+
+        token = self._login()
+        headers = {'Authorization': f'Bearer {token}'}
+        devices = self._json_request('/api/v1/devices?page=1&per_page=1', headers=headers)['data']['data']
+        self.assertTrue(devices)
+        device_id = devices[0]['id']
+        firmware_id = vulnerability_id = report_id = None
+        report_name = f'API Report {uuid.uuid4().hex[:8]}'
+        try:
+            firmware = self._json_request('/api/v1/insights/firmware', method='POST', headers=headers, payload={'device_id': device_id, 'vendor': 'TestVendor', 'version': '1.0', 'recommended_version': '1.1', 'status': 'upgrade_available'})['data']
+            firmware_id = firmware['id']
+            self.assertEqual(firmware['status'], 'upgrade_available')
+            finding = self._json_request('/api/v1/insights/vulnerabilities', method='POST', headers=headers, payload={'device_id': device_id, 'cve': 'CVE-2026-0001', 'severity': 'high', 'title': 'Synthetic finding'})['data']
+            vulnerability_id = finding['id']
+            resolved = self._json_request(f"/api/v1/insights/vulnerabilities/{vulnerability_id}/resolve", method='POST', headers=headers)['data']
+            self.assertEqual(resolved['status'], 'resolved')
+            report = self._json_request('/api/v1/insights/reports', method='POST', headers=headers, payload={'name': report_name, 'report_type': 'vulnerability', 'schedule': 'weekly'})['data']
+            report_id = report['id']
+            self.assertEqual(report['schedule'], 'weekly')
+        finally:
+            db = SessionLocal()
+            try:
+                if firmware_id:
+                    db.query(FirmwareRecord).filter(FirmwareRecord.id == firmware_id).delete(synchronize_session=False)
+                if vulnerability_id:
+                    db.query(VulnerabilityFinding).filter(VulnerabilityFinding.id == vulnerability_id).delete(synchronize_session=False)
+                if report_id:
+                    db.query(ReportDefinition).filter(ReportDefinition.id == report_id).delete(synchronize_session=False)
+                db.commit()
+            finally:
+                db.close()
+
     def test_wireless_controller_profile_lifecycle(self):
         token = self._login()
         headers = {'Authorization': f'Bearer {token}'}

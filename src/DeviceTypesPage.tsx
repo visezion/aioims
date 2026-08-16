@@ -1,8 +1,11 @@
 import { FormEvent, useMemo, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { useEffect } from 'react';
 import { BatteryCharging, Boxes, CircleHelp, Cpu, Database, HardDrive, Image as ImageIcon, MonitorCog, Network, Phone, PlugZap, Plus, RadioTower, Router, Search, Server, Shield, Thermometer, Trash2, Wifi, X, Zap } from 'lucide-react';
 
 export const DEVICE_TYPES_STORAGE_KEY = 'aims-device-types';
+const DEVICE_TYPES_API = `${window.location.protocol}//${window.location.hostname}:8001/api/v1/infrastructure/Device%20Types`;
+let cachedDeviceTypes: DeviceTypeRecord[] = [];
 
 export type DeviceTypeRecord = {
   id: string;
@@ -87,17 +90,33 @@ const emptyTypeForm: DeviceTypeForm = {
 };
 
 export function loadDeviceTypes(): DeviceTypeRecord[] {
-  try {
-    const rows = JSON.parse(localStorage.getItem(DEVICE_TYPES_STORAGE_KEY) || '[]');
-    return Array.isArray(rows) ? rows.map((row) => ({ ...row, exclude_from_utilization: Boolean(row.exclude_from_utilization), icon_key: normalizeDeviceTypeIconKey(row.icon_key) || '' })) : [];
-  } catch {
-    return [];
-  }
+  return cachedDeviceTypes;
 }
 
 export function saveDeviceTypes(rows: DeviceTypeRecord[]) {
-  localStorage.setItem(DEVICE_TYPES_STORAGE_KEY, JSON.stringify(rows));
+  cachedDeviceTypes = rows;
   window.dispatchEvent(new Event('aims:device-types-changed'));
+}
+
+async function loadDeviceTypesFromBackend(token: string) {
+  const response = await fetch(DEVICE_TYPES_API, { headers: { Authorization: `Bearer ${token}` } });
+  const json = await response.json();
+  if (!response.ok) throw new Error(json.detail || json.message || 'Unable to load device types.');
+  const rows = Array.isArray(json.data?.records) ? json.data.records : [];
+  const normalized = rows.map((row: DeviceTypeRecord) => ({ ...row, exclude_from_utilization: Boolean(row.exclude_from_utilization), icon_key: normalizeDeviceTypeIconKey(row.icon_key) || '' }));
+  saveDeviceTypes(normalized);
+  return normalized;
+}
+
+async function saveDeviceTypesToBackend(token: string, rows: DeviceTypeRecord[]) {
+  const response = await fetch(DEVICE_TYPES_API, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ records: rows }),
+  });
+  const json = await response.json();
+  if (!response.ok) throw new Error(json.detail || json.message || 'Unable to save device types.');
+  saveDeviceTypes(rows);
 }
 
 export function deviceTypeLabel(type: DeviceTypeRecord) {
@@ -180,6 +199,13 @@ export function DeviceTypesPage() {
   const [form, setForm] = useState<DeviceTypeForm>(emptyTypeForm);
   const [showForm, setShowForm] = useState(false);
   const [commentMode, setCommentMode] = useState<'write' | 'preview'>('write');
+  const [message, setMessage] = useState('');
+  const token = localStorage.getItem('aims-api-token') || '';
+
+  useEffect(() => {
+    if (!token) return;
+    loadDeviceTypesFromBackend(token).then(setRows).catch((error) => setMessage(error instanceof Error ? error.message : 'Unable to load device types.'));
+  }, [token]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -238,7 +264,7 @@ export function DeviceTypesPage() {
     reader.readAsDataURL(file);
   };
 
-  const save = (event: FormEvent) => {
+  const save = async (event: FormEvent) => {
     event.preventDefault();
     const slug = slugifyDeviceType(form.slug || `${form.manufacturer} ${form.model}`);
     if (!slug) return;
@@ -258,16 +284,28 @@ export function DeviceTypesPage() {
     const next = editing
       ? rows.map((row) => row.id === editing.id ? record : row)
       : [record, ...rows.filter((row) => row.slug !== slug)];
-    setRows(next);
-    saveDeviceTypes(next);
-    setShowForm(false);
-    setEditing(null);
+    try {
+      if (!token) throw new Error('Sign in before saving device types.');
+      await saveDeviceTypesToBackend(token, next);
+      setRows(next);
+      setMessage('Device type saved.');
+      setShowForm(false);
+      setEditing(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to save device type.');
+    }
   };
 
-  const remove = (row: DeviceTypeRecord) => {
+  const remove = async (row: DeviceTypeRecord) => {
     const next = rows.filter((item) => item.id !== row.id);
-    setRows(next);
-    saveDeviceTypes(next);
+    try {
+      if (!token) throw new Error('Sign in before deleting device types.');
+      await saveDeviceTypesToBackend(token, next);
+      setRows(next);
+      setMessage('Device type deleted.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to delete device type.');
+    }
   };
   const activeIconKey = deviceTypeIconKeyFor(form);
 
@@ -280,6 +318,7 @@ export function DeviceTypesPage() {
         </div>
         <button className="add" onClick={() => openForm()}><Plus size={17} /> Add type</button>
       </div>
+      {message && <div className="module-notice">{message}</div>}
 
       <div className="device-type-summary">
         <div><Boxes size={18} /><p>Total types</p><b>{rows.length}</b></div>
