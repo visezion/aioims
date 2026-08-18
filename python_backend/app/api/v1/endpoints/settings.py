@@ -17,7 +17,7 @@ class SettingUpdate(BaseModel):
 
 DEFAULT_SETTINGS = {
     "device_status_refresh_seconds": {
-        "value": "60",
+        "value": "30",
         "description": "How often the device inventory page refreshes operational status, in seconds.",
     },
     "snmp_community": {

@@ -33,7 +33,7 @@ def seed_data() -> None:
         if not db.query(AppConfig).filter(AppConfig.key == 'device_status_refresh_seconds').first():
             db.add(AppConfig(
                 key='device_status_refresh_seconds',
-                value='60',
+                value='30',
                 description='How often the device inventory page refreshes operational status, in seconds.',
             ))
         if not db.query(AppConfig).filter(AppConfig.key == 'snmp_community').first():

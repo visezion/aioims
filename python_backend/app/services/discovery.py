@@ -14,7 +14,7 @@ class NetworkDiscoveryService:
     def __init__(
         self,
         subnet: str = "192.168.1.0/24",
-        max_hosts: int = 64,
+        max_hosts: int = 90000,
         vlan: int = 1,
         connection: str = "Ethernet",
         interface_name: str = "mgmt0",
@@ -28,7 +28,7 @@ class NetworkDiscoveryService:
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> None:
         self.subnet = subnet
-        self.max_hosts = max(1, min(max_hosts, 512))
+        self.max_hosts = max(1, min(max_hosts, 90000))
         self.vlan = vlan
         self.connection = connection
         self.interface_name = interface_name

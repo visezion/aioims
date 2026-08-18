@@ -87,7 +87,7 @@ export function AutoScanPage() {
   const [racks, setRacks] = useState<InfraRecord[]>([]);
   const [form, setForm] = useState({
     subnet: '192.168.220.135/24',
-    max_hosts: '64',
+    max_hosts: '90000',
     site_id: '',
     location: '',
     room: '',
@@ -371,7 +371,7 @@ export function AutoScanPage() {
                 <input required value={form.subnet} onChange={(event) => update('subnet', event.target.value)} placeholder="192.168.100.20-25 or 192.168.100.56,192.168.100.63" />
                 <small>Supports CIDR, single IP, short ranges, full IP ranges, and comma-separated targets.</small>
               </label>
-              <label>Max hosts<input type="number" min="1" max="512" value={form.max_hosts} onChange={(event) => update('max_hosts', event.target.value)} /></label>
+              <label>Max hosts<input type="number" min="1" max="90000" value={form.max_hosts} onChange={(event) => update('max_hosts', event.target.value)} /></label>
               <label>Site
                 <SearchableSelect
                   required

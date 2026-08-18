@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import re
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from app.core.secret_store import decrypt_secret
 from app.core.security import decode_access_token
 from app.db.session import SessionLocal
 from app.models.app_config import AppConfig
+from app.models.alert import Alert
 from app.models.audit_log import AuditLog
 from app.models.credential_profile import CredentialProfile
 from app.models.device import Device
@@ -878,10 +880,13 @@ def _websocket_user(db: Session, token: str) -> User | None:
     if not token:
         return None
     try:
-        email = decode_access_token(token)
+        claims = decode_access_token(token)
     except ValueError:
         return None
-    return db.query(User).filter(User.email == email, User.is_active.is_(True)).first()
+    user = db.query(User).filter(User.email == claims["subject"], User.is_active.is_(True)).first()
+    if not user or user.token_version != claims["token_version"]:
+        return None
+    return user
 
 
 @router.get("", response_model=dict)
@@ -891,7 +896,7 @@ def list_devices(
     role: str = "",
     site_id: int | None = None,
     page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=25, ge=1, le=100),
+    per_page: int = Query(default=25, ge=1, le=10000),
     sort: str = "name",
     direction: str = Query(default="asc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db),
@@ -928,12 +933,30 @@ def list_devices(
     sort_column = sortable.get(sort, Device.name)
     query = query.order_by(sort_column.desc() if direction == "desc" else sort_column.asc())
     total = query.count()
+    summary_devices = query.all()
+    active_count = sum(1 for device in summary_devices if str(device.status or "").lower() == "active")
+    issue_count = sum(1 for device in summary_devices if str(device.status or "").lower() in {"offline", "failed", "down"} or device.snmp_last_error)
+    wireless_count = sum(1 for device in summary_devices if any(value in " ".join(str(item or "") for item in (device.role, device.device_type, device.platform, device.manufacturer, device.model, device.tags)).lower() for value in ("wireless", "access point", "ruckus")) and str(device.status or "").lower() == "active")
+    latest_seen = max((device.last_seen_at for device in summary_devices if device.last_seen_at), default=None)
     devices = query.offset((page - 1) * per_page).limit(per_page).all()
     return {
         "message": "ok",
         "data": {
             "data": [_serialize_device(device, db) for device in devices],
-            "meta": {"page": page, "per_page": per_page, "total": total, "pages": (total + per_page - 1) // per_page},
+            "meta": {
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "pages": (total + per_page - 1) // per_page,
+                "summary": {
+                    "total": total,
+                    "active": active_count,
+                    "issues": issue_count,
+                    "availability": round((active_count / total) * 100, 2) if total else 0,
+                    "online_aps": wireless_count,
+                    "latest_seen_at": _datetime_to_string(latest_seen),
+                },
+            },
         },
     }
 
@@ -956,18 +979,42 @@ def refresh_device_statuses(
     skipped = 0
     changed = []
 
-    for device in devices:
-        if not device.management_ip or device.status in MANUAL_STATUSES:
-            skipped += 1
-            continue
-        result = service.check(device.management_ip, "icmp").to_dict()
+    eligible_devices = [device for device in devices if device.management_ip and device.status not in MANUAL_STATUSES]
+    skipped = len(devices) - len(eligible_devices)
+    check_results = []
+    if eligible_devices:
+        worker_count = min(32, len(eligible_devices))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            check_results = list(executor.map(lambda item: service.check(item.management_ip, "icmp").to_dict(), eligible_devices))
+
+    for device, result in zip(eligible_devices, check_results):
         checked += 1
         next_status = "Active" if result["status"] == "up" else "Offline"
+        now = datetime.now(timezone.utc)
+        alert_fingerprint = f"device-status:{device.id}"
+        status_alert = db.query(Alert).filter(Alert.fingerprint == alert_fingerprint).first()
         if next_status == "Active":
             active += 1
-            device.last_seen_at = datetime.now(timezone.utc)
+            device.last_seen_at = now
+            if status_alert and status_alert.status != "resolved":
+                status_alert.status = "resolved"
+                status_alert.resolved_by = "status-monitor"
+                status_alert.resolved_at = now
+                status_alert.last_seen_at = now
         else:
             offline += 1
+            alert_details = json.dumps({"device_id": device.id, "device_name": device.name, "management_ip": device.management_ip, "checked_at": now.isoformat(), "check": result}, default=str)
+            if status_alert:
+                status_alert.title = "Device offline"
+                status_alert.message = f"{device.name} did not respond to the ICMP status check."
+                status_alert.severity = "critical"
+                status_alert.status = "open" if status_alert.status == "resolved" else status_alert.status
+                status_alert.details = alert_details
+                status_alert.last_seen_at = now
+                status_alert.resolved_by = ""
+                status_alert.resolved_at = None
+            else:
+                db.add(Alert(fingerprint=alert_fingerprint, title="Device offline", message=f"{device.name} did not respond to the ICMP status check.", severity="critical", source="device-status-monitor", entity_type="device", entity_id=device.id, details=alert_details, first_seen_at=now, last_seen_at=now))
         if device.status != next_status:
             changed.append({"id": device.id, "name": device.name, "from": device.status, "to": next_status})
             device.status = next_status

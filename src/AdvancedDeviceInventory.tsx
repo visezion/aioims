@@ -78,7 +78,7 @@ type Device = {
 };
 type DeviceDeletePrompt = { type: 'single'; device: Device } | { type: 'bulk' } | null;
 type Site = { id: number; name: string; location?: string | null };
-type PageMeta = { page: number; per_page: number; total: number; pages: number };
+type PageMeta = { page: number; per_page: number; total: number; pages: number; summary?: { total: number; active: number; issues: number; availability: number; online_aps: number; latest_seen_at?: string | null } };
 type ProtocolResult = { protocol: string; status: string; latency_ms: number | null; detail: string };
 type StoredRoomComponent = {
   id: string;
@@ -274,16 +274,17 @@ export function AdvancedDeviceInventory() {
   const [selectionBusy, setSelectionBusy] = useState(false);
   const [protocolResults, setProtocolResults] = useState<Record<number, ProtocolResult[] | string>>({});
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10000);
   const [meta, setMeta] = useState<PageMeta>({ page: 1, per_page: 25, total: 0, pages: 1 });
   const [sort, setSort] = useState('name');
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc');
   const [siteFilter, setSiteFilter] = useState('All Sites');
   const [locationFilter, setLocationFilter] = useState('All Locations');
-  const [typeFilter, setTypeFilter] = useState('All Types');
+  const [typeFilter, setTypeFilter] = useState('All Device Types');
   const [vendorFilter, setVendorFilter] = useState('All Vendors');
   const [statusFilter, setStatusFilter] = useState('All Statuses');
-  const [statusRefreshSeconds, setStatusRefreshSeconds] = useState(60);
-  const [statusRefreshDraft, setStatusRefreshDraft] = useState('60');
+  const [statusRefreshSeconds, setStatusRefreshSeconds] = useState(30);
+  const [statusRefreshDraft, setStatusRefreshDraft] = useState('30');
   const [statusRefreshNote, setStatusRefreshNote] = useState('Status auto-refresh ready.');
   const [collectingConfigId, setCollectingConfigId] = useState<number | null>(null);
   const [configBackups, setConfigBackups] = useState<ConfigBackup[]>([]);
@@ -424,7 +425,7 @@ export function AdvancedDeviceInventory() {
       let auth = await ensureToken();
       const params = new URLSearchParams({
         page: String(nextPage),
-        per_page: String(meta.per_page),
+        per_page: String(pageSize),
         q: query,
         sort,
         direction,
@@ -479,16 +480,17 @@ export function AdvancedDeviceInventory() {
   useEffect(() => {
     const timer = window.setTimeout(() => load(page), 250);
     return () => window.clearTimeout(timer);
-  }, [query, page, sort, direction]);
+  }, [query, page, pageSize, sort, direction]);
 
   useEffect(() => {
     loadStatusConfig();
   }, []);
 
   useEffect(() => {
-    const interval = window.setInterval(() => refreshDeviceStatuses(true), Math.max(statusRefreshSeconds, 15) * 1000);
-    return () => window.clearInterval(interval);
-  }, [statusRefreshSeconds, page, query, sort, direction]);
+    const refreshFromMonitor = () => { void load(page); };
+    window.addEventListener('aims:device-status-refreshed', refreshFromMonitor);
+    return () => window.removeEventListener('aims:device-status-refreshed', refreshFromMonitor);
+  }, [page]);
 
   useEffect(() => {
     const open = () => openForm();
@@ -867,7 +869,7 @@ export function AdvancedDeviceInventory() {
       const response = await fetch(`${api}/settings/device_status_refresh_seconds`, { headers: { Authorization: `Bearer ${auth}` } });
       const json = await response.json();
       if (!response.ok) throw new Error(json.detail || 'Unable to load status refresh setting.');
-      const seconds = Number(json.data?.value || 60);
+      const seconds = Number(json.data?.value || 30);
       setStatusRefreshSeconds(seconds);
       setStatusRefreshDraft(String(seconds));
     } catch (error) {
@@ -1378,10 +1380,18 @@ export function AdvancedDeviceInventory() {
     setBulkForm((current) => ({ ...current, rack: value === CREATE_NEW_VALUE ? '' : value }));
   };
   const formSiteName = form.site_name === CREATE_NEW_VALUE ? newSiteName : form.site_name;
-  const siteOptions = placementOptionsFor(infraSites, {});
+  const siteOptions = uniqueDeviceValues([...infraSites.map((site) => site.name), ...sites.map((site) => site.name)]);
   const formSiteIsCreate = formCreatePlacement.site || Boolean(form.site_name && form.site_name !== CREATE_NEW_VALUE && !siteOptions.includes(form.site_name));
   const formSiteSelectValue = formSiteIsCreate ? CREATE_NEW_VALUE : form.site_name;
-  const formLocationOptions = formSiteName ? placementOptionsFor(infraLocations, { site: formSiteName }) : [];
+  const formInventoryLocationOptions = formSiteName
+    ? items.filter((device) => sameTextValue(device.site?.name, formSiteName)).map((device) => device.location)
+    : [];
+  const formRackLocationOptions = formSiteName
+    ? infraRacks.filter((rack) => sameTextValue(rack.site, formSiteName)).map((rack) => rack.location)
+    : [];
+  const formLocationOptions = formSiteName
+    ? uniqueDeviceValues([...placementOptionsFor(infraLocations, { site: formSiteName }), ...formRackLocationOptions, ...formInventoryLocationOptions, form.location])
+    : [];
   const formLocationRecord = findPlacementRecord(infraLocations, form.location, formSiteName);
   const formRoomOptions = roomOptionsForPlacementLocation(formLocationRecord);
   const formNeedsRoom = formRoomOptions.length > 1;
@@ -1432,15 +1442,15 @@ export function AdvancedDeviceInventory() {
   const selectedDeviceNames = items.filter((device) => selectedIds.includes(device.id)).map((device) => device.name);
   const listSiteOptions = ['All Sites', ...uniqueDeviceValues(items.map((device) => device.site?.name))];
   const listLocationOptions = ['All Locations', ...uniqueDeviceValues(items.map((device) => device.location))];
-  const listTypeOptions = ['All Types', ...uniqueDeviceValues(items.map((device) => device.device_type || device.role))];
+  const listTypeOptions = ['All Device Types', ...uniqueDeviceValues(items.map((device) => device.device_type))];
   const listVendorOptions = ['All Vendors', ...uniqueDeviceValues(items.map((device) => device.manufacturer))];
   const listStatusOptions = ['All Statuses', ...uniqueDeviceValues(items.map((device) => device.status))];
   const filteredItems = items.filter((device) => {
-    if (siteFilter !== 'All Sites' && device.site?.name !== siteFilter) return false;
-    if (locationFilter !== 'All Locations' && device.location !== locationFilter) return false;
-    if (typeFilter !== 'All Types' && (device.device_type || device.role) !== typeFilter) return false;
-    if (vendorFilter !== 'All Vendors' && device.manufacturer !== vendorFilter) return false;
-    if (statusFilter !== 'All Statuses' && device.status !== statusFilter) return false;
+    if (siteFilter !== 'All Sites' && !sameTextValue(device.site?.name, siteFilter)) return false;
+    if (locationFilter !== 'All Locations' && !sameTextValue(device.location, locationFilter)) return false;
+    if (typeFilter !== 'All Device Types' && !sameTextValue(device.device_type, typeFilter)) return false;
+    if (vendorFilter !== 'All Vendors' && !sameTextValue(device.manufacturer, vendorFilter)) return false;
+    if (statusFilter !== 'All Statuses' && !sameTextValue(device.status, statusFilter)) return false;
     return true;
   });
   const activeListDevice = filteredItems.find((device) => device.id === activeListDeviceId) || filteredItems[0] || items[0] || null;
@@ -1449,6 +1459,7 @@ export function AdvancedDeviceInventory() {
   const pageAvailability = items.length ? `${Math.round((pageActiveCount / items.length) * 10000) / 100}%` : '-';
   const pageOnlineAps = items.filter((item) => isWirelessInventoryDevice(item) && String(item.status || '').toLowerCase() === 'active').length;
   const latestSeen = latestDeviceTimestamp(items);
+  const inventorySummary = meta.summary;
   const detailPhysicalInterfaces = (detail?.interfaces || []).filter(isPhysicalFrontInterface);
   const selectedInterface = selectedInterfaceName
     ? detailPhysicalInterfaces.find((item) => sameTextValue(item.name, selectedInterfaceName))
@@ -1550,12 +1561,12 @@ export function AdvancedDeviceInventory() {
 
       <div className="device-list-workspace">
         <div className="device-list-kpis">
-          <DeviceListKpi icon={<Server size={18} />} tone="blue" label="Total Devices" value={meta.total} sub={`${items.length} loaded on this page`} />
-          <DeviceListKpi icon={<ShieldCheck size={18} />} tone="green" label="Active Devices" value={pageActiveCount} sub="Current page" />
-          <DeviceListKpi icon={<Activity size={18} />} tone="red" label="Device Issues" value={pageCriticalCount} sub="Offline, failed, SNMP, or sensor errors" />
-          <DeviceListKpi icon={<Activity size={18} />} tone="cyan" label="Availability" value={pageAvailability} sub="Current page active ratio" />
-          <DeviceListKpi icon={<Cable size={18} />} tone="purple" label="Online APs" value={pageOnlineAps} sub="Wireless devices on this page" />
-          <DeviceListKpi icon={<Activity size={18} />} tone="orange" label="Latest Seen" value={latestSeen ? relativeTime(latestSeen) : '-'} sub={latestSeen ? formatDateTime(latestSeen) : 'No timestamp recorded'} />
+          <DeviceListKpi icon={<Server size={18} />} tone="blue" label="Total Devices" value={inventorySummary?.total ?? meta.total} sub={`${items.length} loaded on this page`} />
+          <DeviceListKpi icon={<ShieldCheck size={18} />} tone="green" label="Active Devices" value={inventorySummary?.active ?? pageActiveCount} sub="All inventory records" />
+          <DeviceListKpi icon={<Activity size={18} />} tone="red" label="Device Issues" value={inventorySummary?.issues ?? pageCriticalCount} sub="Offline, failed, SNMP, or sensor errors" />
+          <DeviceListKpi icon={<Activity size={18} />} tone="cyan" label="Availability" value={inventorySummary ? `${inventorySummary.availability}%` : pageAvailability} sub="All inventory records" />
+          <DeviceListKpi icon={<Cable size={18} />} tone="purple" label="Online APs" value={inventorySummary?.online_aps ?? pageOnlineAps} sub="All inventory records" />
+          <DeviceListKpi icon={<Activity size={18} />} tone="orange" label="Latest Seen" value={inventorySummary?.latest_seen_at ? relativeTime(inventorySummary.latest_seen_at) : latestSeen ? relativeTime(latestSeen) : '-'} sub={inventorySummary?.latest_seen_at ? formatDateTime(inventorySummary.latest_seen_at) : latestSeen ? formatDateTime(latestSeen) : 'No timestamp recorded'} />
         </div>
 
         <section className="card device-list-filters">
@@ -1568,7 +1579,7 @@ export function AdvancedDeviceInventory() {
             <Search size={15} />
             <input value={query} onChange={(event) => { setPage(1); setQuery(event.target.value); }} placeholder="Search hostname, IP, serial, MAC..." />
           </div>
-          <button className="plain-button" onClick={() => { setSiteFilter('All Sites'); setLocationFilter('All Locations'); setTypeFilter('All Types'); setVendorFilter('All Vendors'); setStatusFilter('All Statuses'); }}>Clear filters</button>
+          <button className="plain-button" onClick={() => { setSiteFilter('All Sites'); setLocationFilter('All Locations'); setTypeFilter('All Device Types'); setVendorFilter('All Vendors'); setStatusFilter('All Statuses'); }}>Clear filters</button>
         </section>
 
         <div className="device-list-layout">
@@ -1605,6 +1616,12 @@ export function AdvancedDeviceInventory() {
                   <option value="asc">Asc</option>
                   <option value="desc">Desc</option>
                 </select>
+                <select value={pageSize} onChange={(event) => { setPage(1); setPageSize(Number(event.target.value)); }} aria-label="Devices per page">
+                  <option value={25}>25 / page</option>
+                  <option value={50}>50 / page</option>
+                  <option value={100}>100 / page</option>
+                  <option value={10000}>All devices</option>
+                </select>
               </div>
             </div>
             <div className="table-wrap">
@@ -1615,7 +1632,7 @@ export function AdvancedDeviceInventory() {
                     <th>{sortHeader('name', 'Device / Hostname')}</th>
                     <th>{sortHeader('management_ip', 'Management IP')}</th>
                     <th>Vendor / Model</th>
-                    <th>OS / Version</th>
+                    <th>Location</th>
                     <th>Interfaces</th>
                     <th>Temperature</th>
                     <th>Power</th>
@@ -1642,7 +1659,7 @@ export function AdvancedDeviceInventory() {
                         </td>
                         <td>{device.management_ip || '-'}</td>
                         <td><b>{device.manufacturer || '-'}</b><small>{device.model || device.device_type || '-'}</small></td>
-                      <td>{device.platform || '-'}</td>
+                        <td>{device.location || device.site?.name || '-'}</td>
                       <td>{(device.interfaces || []).length || '-'}</td>
                         <td><DeviceTemperatureCell environment={environment} device={device} /></td>
                         <td><DevicePowerCell environment={environment} device={device} deviceTypes={deviceTypeProfiles} /></td>
@@ -1689,10 +1706,10 @@ export function AdvancedDeviceInventory() {
             </div>
             <div className="pagination-bar">
               <span>Showing {filteredItems.length ? 1 : 0} to {filteredItems.length} of {meta.total} results</span>
-              <button className="plain-button" disabled={meta.page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</button>
-              <b>{meta.page}</b>
-              <button className="plain-button" disabled={meta.page >= meta.pages} onClick={() => setPage((value) => value + 1)}>Next</button>
-              <span>{meta.per_page} / page</span>
+              <button className="plain-button" disabled={meta.page <= 1 || pageSize >= 10000} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</button>
+              <b>{pageSize >= 10000 ? 'All' : meta.page}</b>
+              <button className="plain-button" disabled={meta.page >= meta.pages || pageSize >= 10000} onClick={() => setPage((value) => value + 1)}>Next</button>
+              <span>{pageSize >= 10000 ? 'All devices' : `${meta.per_page} / page`}</span>
             </div>
           </section>
 

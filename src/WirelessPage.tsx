@@ -625,13 +625,19 @@ export function WirelessPage({ initialView = 'monitoring' }: { initialView?: Wir
       port: selected?.port ? String(selected.port) : current.port || '161',
     }));
   };
-  const controllerSiteOptions = Array.from(new Set(
-    infrastructureSites
+  const controllerSiteOptions = Array.from(new Set([
+    ...sites
+      .map((site) => site.name.trim())
+      .filter(Boolean),
+    ...infrastructureSites
       .filter((site) => String(site.status || 'Active').toLowerCase() !== 'offline')
       .map((site) => site.name.trim())
       .filter(Boolean),
-  )).sort((a, b) => a.localeCompare(b));
-  const controllerSiteMissing = Boolean(controllerForm.site_name && !controllerSiteOptions.includes(controllerForm.site_name));
+  ])).sort((a, b) => a.localeCompare(b));
+  const controllerSiteMissing = Boolean(
+    controllerForm.site_name
+      && !controllerSiteOptions.some((site) => site.toLowerCase() === controllerForm.site_name.trim().toLowerCase()),
+  );
   const apSiteOptions = buildApSiteOptions(sites, infrastructureSites, infrastructureLocations);
   const apLocationSiteName = apLocationEdit ? siteNameFromApSiteValue(apLocationEdit.site_id, sites) : '';
   const apLocationOptions = Array.from(new Set(
@@ -867,7 +873,7 @@ export function WirelessPage({ initialView = 'monitoring' }: { initialView?: Wir
                   options={[
                     { value: '', label: 'Unassigned' },
                     ...controllerSiteOptions.map((site) => ({ value: site, label: site })),
-                    ...(controllerSiteMissing ? [{ value: controllerForm.site_name, label: `${controllerForm.site_name} (not in Infrastructure Sites)` }] : []),
+                    ...(controllerSiteMissing ? [{ value: controllerForm.site_name, label: `${controllerForm.site_name} (saved site)` }] : []),
                   ]}
                 />
               </label>

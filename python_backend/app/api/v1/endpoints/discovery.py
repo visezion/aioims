@@ -23,7 +23,7 @@ router = APIRouter()
 @router.post("/scan")
 def scan_network(
     subnet: str = "192.168.1.0/24",
-    max_hosts: int = 64,
+    max_hosts: int = 90000,
     site_id: int | None = None,
     site_name: str = "",
     location: str = "",
