@@ -134,13 +134,21 @@ export function AutoScanPage() {
       if (!sitesResponse.ok) throw new Error(sitesJson.detail || sitesJson.message || 'Unable to load sites.');
       setCredentials(credentialsJson.data?.data || []);
       setSites(sitesJson.data?.data || []);
-      const [siteRecords, locationRecords, rackRecords] = await Promise.all([
+      const [siteRecords, locationRecords, rackRecords, wirelessResponse] = await Promise.all([
         loadInfrastructureRecords(auth, 'Sites'),
         loadInfrastructureRecords(auth, 'Locations'),
         loadInfrastructureRecords(auth, 'Racks'),
+        fetch(`${api}/wireless/monitoring?refresh=0&fast=1`, { headers: { Authorization: `Bearer ${auth}` } }),
       ]);
+      const wirelessJson = wirelessResponse.ok ? await wirelessResponse.json() : {};
+      const wirelessLocations: InfraRecord[] = (Array.isArray(wirelessJson.data?.access_points) ? wirelessJson.data.access_points : [])
+        .map((ap: { location?: string | null; site?: { name?: string } | string | null; site_name?: string | null; controller_name?: string | null }) => ({
+          name: String(ap.location || '').trim(),
+          site: typeof ap.site === 'object' ? String(ap.site?.name || '') : String(ap.site || ap.site_name || ap.controller_name || ''),
+        }))
+        .filter((record: InfraRecord) => Boolean(record.name));
       setInfrastructureSites(siteRecords);
-      setLocations(locationRecords);
+      setLocations([...locationRecords, ...wirelessLocations]);
       setRacks(rackRecords);
       setMessage('');
     } catch (error) {
@@ -335,7 +343,7 @@ export function AutoScanPage() {
   const selectedSiteName = siteOptions.find((site) => site.value === form.site_id)?.name || '';
   const allLocationOptions = uniqueByName(locations);
   const matchedLocationOptions = uniqueByName(locations.filter((location) => !selectedSiteName || !location.site || sameText(location.site, selectedSiteName)));
-  const locationOptions = selectedSiteName && !matchedLocationOptions.length ? allLocationOptions : matchedLocationOptions;
+  const locationOptions = allLocationOptions;
   const selectedLocation = locationOptions.find((location) => sameText(location.name, form.location));
   const roomOptions = roomOptionsForLocation(selectedLocation);
   const rackContextOptions = uniqueByName(racks.filter((rack) => {

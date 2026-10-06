@@ -400,7 +400,8 @@ function normalizeRecordsForResource(resource: InfrastructureResourceName, recor
   records.forEach((record) => {
     const name = String(record.name || '').trim();
     if (!name) return;
-    const key = name.toLowerCase();
+    const site = String(record.site || '').trim();
+    const key = `${site.toLowerCase()}|${name.toLowerCase()}`;
     const normalized = normalizeLocationRoomRecord({ ...record, name });
     const existing = byName.get(key);
     if (!existing) {
@@ -735,7 +736,7 @@ function deviceIps(device: InventoryDevice) {
 
 function recordMergeKey(resource: InfrastructureResourceName, record: InfraRecord) {
   if (resource === 'Sites') return `site:${record.name}`.toLowerCase();
-  if (resource === 'Locations') return `location:${record.name}`.toLowerCase();
+  if (resource === 'Locations') return `location:${record.site || ''}:${record.name}`.toLowerCase();
   if (resource === 'Rooms') return `room:${record.site || ''}:${record.location || ''}:${record.name}`.toLowerCase();
   if (resource === 'Racks') return `rack:${record.site || ''}:${record.location || ''}:${record.region || ''}:${record.name}`.toLowerCase();
   if (resource === 'VLANs') return `vlan:${record.site || ''}:${record.vlanId || record.name}`.toLowerCase();
@@ -785,7 +786,8 @@ function roomNamesForLocation(location?: InfraRecord | null) {
 }
 
 function findLocationRecordForPlacement(locations: InfraRecord[], site: string, locationName: string) {
-  return locations.find((record) => sameText(record.name, locationName) && (!site || !record.site || sameText(record.site, site)));
+  return locations.find((record) => sameText(record.name, locationName) && Boolean(record.site) && sameText(record.site, site))
+    || locations.find((record) => sameText(record.name, locationName) && !record.site);
 }
 
 function addRoomToLocationRows(locations: InfraRecord[], site: string, locationName: string, roomName: string) {
@@ -1606,7 +1608,9 @@ export function InfrastructurePage({ resource }: { resource: InfrastructureResou
         setDeviceError('Select a site before creating a location.');
         return;
       }
-      const duplicate = records.find((record) => record.id !== next.id && sameText(record.name, next.name));
+      const duplicate = records.find((record) => record.id !== next.id
+        && sameText(record.name, next.name)
+        && sameText(record.site, next.site));
       if (duplicate) {
         setDeviceError(`Location "${next.name}" already exists.`);
         return;
@@ -2937,7 +2941,12 @@ function RoomListWorkspace({
   const [capacityFilter, setCapacityFilter] = useState('all');
 
   const enriched = useMemo(() => records.map((record) => roomRowMetrics(record, devices, racks, deviceTypes, environments)), [records, devices, racks, deviceTypes, environments]);
-  const locationOptions = uniqueRackValues(enriched.map((row) => row.locationLabel));
+  const locationOptions = uniqueRackValues([
+    ...enriched.map((row) => row.locationLabel),
+    ...records.map((record) => record.location),
+    ...racks.map((rack) => rack.location),
+    ...devices.map((device) => device.location),
+  ]);
   const typeOptions = uniqueRackValues(enriched.map((row) => row.type));
   const floorOptions = uniqueRackValues(enriched.map((row) => row.floor));
   const visible = enriched.filter((row) => {
@@ -2951,7 +2960,7 @@ function RoomListWorkspace({
       row.floor,
       row.statusLabel,
     ].join(' ').toLowerCase().includes(search);
-    const matchesLocation = locationFilter === 'all' || row.locationLabel === locationFilter;
+    const matchesLocation = locationFilter === 'all' || sameText(row.locationLabel, locationFilter);
     const matchesType = typeFilter === 'all' || row.type === typeFilter;
     const matchesStatus = statusFilter === 'all' || row.record.status === statusFilter || row.statusLabel === statusFilter;
     const matchesEnvironment = environmentFilter === 'all' || row.environmentTone === environmentFilter;
@@ -6610,12 +6619,15 @@ function RackListWorkspace({
   const [roomFilter, setRoomFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const sites = uniqueRackValues(records.map((rack) => rack.site));
-  const rooms = uniqueRackValues(records.map((rack) => rack.region || rack.location));
+  const rooms = uniqueRackValues([
+    ...records.map((rack) => rack.region || rack.location),
+    ...devices.map((device) => device.room || device.location),
+  ]);
   const filteredRows = records.filter((rack) => {
     const haystack = [rack.name, rack.site, rack.location, rack.region, rack.role, rack.status, rack.tags, rack.description].join(' ').toLowerCase();
     const matchesQuery = !query.trim() || haystack.includes(query.trim().toLowerCase());
     const matchesSite = siteFilter === 'all' || rack.site === siteFilter;
-    const matchesRoom = roomFilter === 'all' || (rack.region || rack.location) === roomFilter;
+    const matchesRoom = roomFilter === 'all' || sameText(rack.region || rack.location, roomFilter);
     const matchesStatus = statusFilter === 'all' || rack.status === statusFilter;
     return matchesQuery && matchesSite && matchesRoom && matchesStatus;
   }).sort((a, b) => resourceDisplayValue('Racks', a).localeCompare(resourceDisplayValue('Racks', b), undefined, { numeric: true, sensitivity: 'base' }));

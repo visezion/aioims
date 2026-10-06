@@ -641,13 +641,15 @@ export function WirelessPage({ initialView = 'monitoring' }: { initialView?: Wir
   const apSiteOptions = buildApSiteOptions(sites, infrastructureSites, infrastructureLocations);
   const apLocationSiteName = apLocationEdit ? siteNameFromApSiteValue(apLocationEdit.site_id, sites) : '';
   const apLocationOptions = Array.from(new Set(
-    infrastructureLocations
+    [
+      ...infrastructureLocations,
+      ...devices.map((device) => ({
+        name: String(device.location || '').trim(),
+        site: siteNameFromWirelessDevice(device),
+        status: 'Active',
+      })),
+    ]
       .filter((location) => String(location.status || 'Active').toLowerCase() !== 'offline')
-      .filter((location) => {
-        if (!apLocationSiteName) return false;
-        const locationSite = String(location.site || '').trim().toLowerCase();
-        return !locationSite || locationSite === apLocationSiteName.trim().toLowerCase();
-      })
       .map((location) => location.name.trim())
       .filter(Boolean),
   )).sort((a, b) => a.localeCompare(b));
@@ -3055,6 +3057,10 @@ function siteNameFromApSiteValue(value: string, sites: Site[]) {
     }
   }
   return sites.find((site) => String(site.id) === value)?.name || '';
+}
+
+function siteNameFromWirelessDevice(device: Device) {
+  return typeof device.site === 'object' ? String(device.site?.name || '').trim() : String(device.site || '').trim();
 }
 
 function buildApSiteOptions(sites: Site[], infrastructureSites: InfrastructureSiteRecord[], infrastructureLocations: InfrastructureLocationRecord[]) {

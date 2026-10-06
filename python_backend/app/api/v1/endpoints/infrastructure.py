@@ -94,12 +94,32 @@ def get_infrastructure(resource: str, db: Session = Depends(get_db), current_use
     resource = _normalize_resource(resource)
     records_row = _get_config(db, _records_key(resource))
     hidden_row = _get_config(db, _hidden_key(resource))
+    records = _json_list(records_row.value if records_row else "[]")
+    if resource == "Locations":
+        derived_locations = []
+        for device in db.query(Device).all():
+            location = str(device.location or "").strip()
+            if not location:
+                continue
+            site_name = str(device.site.name if device.site else "").strip()
+            derived_locations.append({
+                "id": f"device-location:{site_name}:{location}".lower(),
+                "name": location,
+                "site": site_name,
+                "status": "Active",
+                "source": "device",
+                "relatedDeviceIds": [device.id],
+                "devices": 1,
+                "role": "Device location",
+                "description": f"Auto-built from device inventory location \"{location}\".",
+            })
+        records = _dedupe_records(resource, [*records, *derived_locations])
     return {
         "message": "ok",
         "data": {
             "resource": resource,
             "configured": records_row is not None,
-            "records": _json_list(records_row.value if records_row else "[]"),
+            "records": records,
             "hidden_keys": _json_list(hidden_row.value if hidden_row else "[]"),
         },
     }
@@ -260,7 +280,8 @@ def _dedupe_records(resource: str, records: list[dict[str, Any]]) -> list[dict[s
         name = str(record.get("name") or "").strip()
         if not name:
             continue
-        key = name.lower()
+        site = str(record.get("site") or "").strip()
+        key = f"{site.lower()}|{name.lower()}"
         normalized = {**record, "name": name}
         existing = by_name.get(key)
         if not existing:

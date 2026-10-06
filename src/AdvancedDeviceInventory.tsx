@@ -78,6 +78,7 @@ type Device = {
 };
 type DeviceDeletePrompt = { type: 'single'; device: Device } | { type: 'bulk' } | null;
 type Site = { id: number; name: string; location?: string | null };
+type WirelessLocationRecord = { site: string; location: string };
 type PageMeta = { page: number; per_page: number; total: number; pages: number; summary?: { total: number; active: number; issues: number; availability: number; online_aps: number; latest_seen_at?: string | null } };
 type ProtocolResult = { protocol: string; status: string; latency_ms: number | null; detail: string };
 type StoredRoomComponent = {
@@ -316,6 +317,7 @@ export function AdvancedDeviceInventory() {
   const [infraSites, setInfraSites] = useState<InfrastructurePlacementRecord[]>(() => loadInfrastructurePlacementRecords('Sites'));
   const [infraLocations, setInfraLocations] = useState<InfrastructurePlacementRecord[]>(() => loadInfrastructurePlacementRecords('Locations'));
   const [infraRacks, setInfraRacks] = useState<InfrastructurePlacementRecord[]>(() => loadInfrastructurePlacementRecords('Racks'));
+  const [wirelessLocations, setWirelessLocations] = useState<WirelessLocationRecord[]>([]);
   const [newSiteName, setNewSiteName] = useState('');
   const [formCreatePlacement, setFormCreatePlacement] = useState({ site: false, location: false, rack: false });
   const [bulkCreatePlacement, setBulkCreatePlacement] = useState({ site: false, location: false, rack: false });
@@ -468,6 +470,15 @@ export function AdvancedDeviceInventory() {
       if (backendRacks !== 'unauthorized') {
         saveInfrastructurePlacementRecords('Racks', backendRacks, false);
         setInfraRacks(backendRacks);
+      }
+      const wirelessResponse = await fetch(`${api}/wireless/monitoring?refresh=0&fast=1`, { headers: { Authorization: `Bearer ${auth}` } });
+      if (wirelessResponse.ok) {
+        const wirelessJson = await wirelessResponse.json();
+        const rows = Array.isArray(wirelessJson.data?.access_points) ? wirelessJson.data.access_points : [];
+        setWirelessLocations(rows.map((ap: { site?: { name?: string } | string | null; site_name?: string | null; controller_name?: string | null; location?: string | null }) => ({
+          site: typeof ap.site === 'object' ? String(ap.site?.name || '') : String(ap.site || ap.site_name || ap.controller_name || ''),
+          location: String(ap.location || ''),
+        })).filter((row: WirelessLocationRecord) => row.location));
       }
       setMessage('');
     } catch (error) {
@@ -625,6 +636,30 @@ export function AdvancedDeviceInventory() {
     };
   }, []);
 
+  const refreshLocationCatalog = async () => {
+    try {
+      const auth = await ensureToken();
+      const [locationRows, wirelessResponse] = await Promise.all([
+        loadBackendInfrastructurePlacementRecords(auth, 'Locations'),
+        fetch(`${api}/wireless/monitoring?refresh=0&fast=1`, { headers: { Authorization: `Bearer ${auth}` } }),
+      ]);
+      if (locationRows !== 'unauthorized') {
+        saveInfrastructurePlacementRecords('Locations', locationRows, false);
+        setInfraLocations(locationRows);
+      }
+      if (wirelessResponse.ok) {
+        const wirelessJson = await wirelessResponse.json();
+        const rows = Array.isArray(wirelessJson.data?.access_points) ? wirelessJson.data.access_points : [];
+        setWirelessLocations(rows.map((ap: { site?: { name?: string } | string | null; site_name?: string | null; controller_name?: string | null; location?: string | null }) => ({
+          site: typeof ap.site === 'object' ? String(ap.site?.name || '') : String(ap.site || ap.site_name || ap.controller_name || ''),
+          location: String(ap.location || ''),
+        })).filter((row: WirelessLocationRecord) => row.location));
+      }
+    } catch {
+      // Keep the last successful catalog available while the form remains usable.
+    }
+  };
+
   const openForm = (device?: Device) => {
     setMessage('');
     setForm(device ? deviceToForm(device, infraRacks) : emptyForm);
@@ -632,6 +667,7 @@ export function AdvancedDeviceInventory() {
     setFormCreatePlacement({ site: false, location: false, rack: false });
     setShowForm(true);
     void loadPlacementDevices();
+    void refreshLocationCatalog();
   };
 
   const saveDevice = async (event: FormEvent<HTMLFormElement>) => {
@@ -1347,6 +1383,7 @@ export function AdvancedDeviceInventory() {
     }));
   };
   const updateFormSite = (value: string) => {
+    void refreshLocationCatalog();
     setFormCreatePlacement((current) => ({ ...current, site: value === CREATE_NEW_VALUE, location: false, rack: false }));
     setNewSiteName('');
     setForm((current) => ({ ...current, site_name: value === CREATE_NEW_VALUE ? CREATE_NEW_VALUE : value, site_id: '', location: '', room: '', rack: '', position: '' }));
@@ -1364,6 +1401,7 @@ export function AdvancedDeviceInventory() {
   };
   const updateBulkForm = (key: keyof BulkEditForm, value: string) => setBulkForm((current) => ({ ...current, [key]: value }));
   const updateBulkSite = (value: string) => {
+    void refreshLocationCatalog();
     setBulkCreatePlacement((current) => ({ ...current, site: value === CREATE_NEW_VALUE, location: false, rack: false }));
     setNewSiteName('');
     setBulkForm((current) => ({ ...current, site_name: value === CREATE_NEW_VALUE ? CREATE_NEW_VALUE : value, site_id: '', location: '', room: '', rack: '' }));
@@ -1389,8 +1427,11 @@ export function AdvancedDeviceInventory() {
   const formRackLocationOptions = formSiteName
     ? infraRacks.filter((rack) => sameTextValue(rack.site, formSiteName)).map((rack) => rack.location)
     : [];
+  const formWirelessLocationOptions = formSiteName
+    ? wirelessLocations.map((row) => row.location)
+    : [];
   const formLocationOptions = formSiteName
-    ? uniqueDeviceValues([...placementOptionsFor(infraLocations, { site: formSiteName }), ...formRackLocationOptions, ...formInventoryLocationOptions, form.location])
+    ? uniqueDeviceValues([...infraLocations.map((location) => location.name), ...formRackLocationOptions, ...formInventoryLocationOptions, ...formWirelessLocationOptions, form.location])
     : [];
   const formLocationRecord = findPlacementRecord(infraLocations, form.location, formSiteName);
   const formRoomOptions = roomOptionsForPlacementLocation(formLocationRecord);
@@ -1409,7 +1450,24 @@ export function AdvancedDeviceInventory() {
   const bulkSiteIsCreate = bulkCreatePlacement.site || Boolean(bulkForm.site_name && ![CLEAR_VALUE, ...bulkSiteOptions].includes(bulkForm.site_name));
   const bulkSiteSelectValue = bulkSiteIsCreate ? CREATE_NEW_VALUE : bulkForm.site_name;
   const bulkSiteName = bulkForm.site_name === CREATE_NEW_VALUE ? newSiteName : bulkForm.site_name;
-  const bulkLocationOptions = bulkSiteName ? placementOptionsFor(infraLocations, { site: bulkSiteName }) : [];
+  const bulkInventoryLocationOptions = bulkSiteName
+    ? items.filter((device) => sameTextValue(device.site?.name, bulkSiteName)).map((device) => device.location)
+    : [];
+  const bulkRackLocationOptions = bulkSiteName
+    ? infraRacks.filter((rack) => sameTextValue(rack.site, bulkSiteName)).map((rack) => rack.location)
+    : [];
+  const bulkWirelessLocationOptions = bulkSiteName
+    ? wirelessLocations.map((row) => row.location)
+    : [];
+  const bulkLocationOptions = bulkSiteName
+    ? uniqueDeviceValues([
+      ...infraLocations.map((location) => location.name),
+      ...bulkRackLocationOptions,
+      ...bulkInventoryLocationOptions,
+      ...bulkWirelessLocationOptions,
+      bulkForm.location,
+    ])
+    : [];
   const bulkLocationRecord = findPlacementRecord(infraLocations, bulkForm.location, bulkSiteName);
   const bulkRoomOptions = roomOptionsForPlacementLocation(bulkLocationRecord);
   const bulkNeedsRoom = bulkRoomOptions.length > 1;
@@ -1441,7 +1499,14 @@ export function AdvancedDeviceInventory() {
   const sshProfiles = credentials.filter((profile) => profile.credential_type === 'ssh');
   const selectedDeviceNames = items.filter((device) => selectedIds.includes(device.id)).map((device) => device.name);
   const listSiteOptions = ['All Sites', ...uniqueDeviceValues(items.map((device) => device.site?.name))];
-  const listLocationOptions = ['All Locations', ...uniqueDeviceValues(items.map((device) => device.location))];
+  const listLocationOptions = [
+    'All Locations',
+    ...uniqueDeviceValues([
+      ...infraLocations.map((location) => location.name),
+      ...wirelessLocations.map((location) => location.location),
+      ...items.map((device) => device.location),
+    ]),
+  ];
   const listTypeOptions = ['All Device Types', ...uniqueDeviceValues(items.map((device) => device.device_type))];
   const listVendorOptions = ['All Vendors', ...uniqueDeviceValues(items.map((device) => device.manufacturer))];
   const listStatusOptions = ['All Statuses', ...uniqueDeviceValues(items.map((device) => device.status))];
@@ -1594,7 +1659,7 @@ export function AdvancedDeviceInventory() {
                 )}
                 <button className="plain-button" disabled={selectionBusy || Boolean(bulkAction)} onClick={ingestSelectedDevices}>{bulkAction === 'ingest' ? 'Ingesting...' : 'Ingest selected'}</button>
                 <button className="plain-button" disabled={selectionBusy || Boolean(bulkAction)} onClick={fullScanSelectedDevices}>{bulkAction === 'scan' ? 'Scanning...' : 'Full scan + ingest selected'}</button>
-                <button className="plain-button" disabled={selectionBusy || Boolean(bulkAction)} onClick={() => { setBulkCreatePlacement({ site: false, location: false, rack: false }); setNewSiteName(''); setShowBulkEdit(true); }}>Edit selected</button>
+                <button className="plain-button" disabled={selectionBusy || Boolean(bulkAction)} onClick={() => { setBulkCreatePlacement({ site: false, location: false, rack: false }); setNewSiteName(''); setShowBulkEdit(true); void refreshLocationCatalog(); }}>Edit selected</button>
                 <button className="plain-button danger-button" disabled={selectionBusy || Boolean(bulkAction)} onClick={() => setDeletePrompt({ type: 'bulk' })}>Delete selected</button>
                 <button className="plain-button" onClick={() => setSelectedIds([])}>Clear</button>
               </div>
@@ -2542,7 +2607,8 @@ function normalizeInfrastructurePlacementRecords(resource: 'Sites' | 'Locations'
   rows.forEach((row) => {
     const name = String(row.name || '').trim();
     if (!name) return;
-    const key = name.toLowerCase();
+    const site = String(row.site || '').trim();
+    const key = `${site.toLowerCase()}|${name.toLowerCase()}`;
     const normalized = normalizeRooms({ ...row, name });
     const existing = byName.get(key);
     if (!existing) {
@@ -2604,7 +2670,7 @@ function mergeInfrastructurePlacementRows(resource: 'Sites' | 'Locations' | 'Rac
 function infrastructurePlacementMergeKey(resource: 'Sites' | 'Locations' | 'Racks', row: InfrastructurePlacementRecord) {
   const name = String(row.name || '').trim().toLowerCase();
   if (!name) return '';
-  if (resource === 'Locations') return `location:${name}`;
+  if (resource === 'Locations') return `location:${String(row.site || '').trim().toLowerCase()}:${name}`;
   if (resource === 'Racks') return `rack:${String(row.site || '').trim().toLowerCase()}:${String(row.location || '').trim().toLowerCase()}:${rackRoomName(row).toLowerCase()}:${name}`;
   return `${resource.toLowerCase()}:${name}`;
 }
