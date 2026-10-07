@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "app:install": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-local-app.ps1",
+    "app:start": ".venv\\Scripts\\python.exe scripts\\local_app.py",
     "dev": "vite --host=0.0.0.0 --port=4173 --strictPort",
     "api": ".venv\\Scripts\\python.exe python_backend\\server.py --port 8001",
     "build": "tsc -b && vite build",

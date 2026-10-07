@@ -935,7 +935,7 @@ def list_devices(
     total = query.count()
     summary_devices = query.all()
     active_count = sum(1 for device in summary_devices if str(device.status or "").lower() == "active")
-    issue_count = sum(1 for device in summary_devices if str(device.status or "").lower() in {"offline", "failed", "down"} or device.snmp_last_error)
+    issue_count = total - active_count
     wireless_count = sum(1 for device in summary_devices if any(value in " ".join(str(item or "") for item in (device.role, device.device_type, device.platform, device.manufacturer, device.model, device.tags)).lower() for value in ("wireless", "access point", "ruckus")) and str(device.status or "").lower() == "active")
     latest_seen = max((device.last_seen_at for device in summary_devices if device.last_seen_at), default=None)
     devices = query.offset((page - 1) * per_page).limit(per_page).all()

@@ -18,6 +18,22 @@ AIMS is a local network operations dashboard with a React/Vite frontend and a Fa
 
 ## Run Locally
 
+### Windows app shortcut
+
+With the dependencies below installed, run `npm.cmd run app:install` once.
+This builds the UI and creates **AIMS** shortcuts on your Desktop and Start menu.
+Opening either shortcut automatically starts the local API and UI, waits for the
+database to be ready, and opens an Edge/Chrome app window (or your default browser).
+No terminal commands are needed for subsequent launches. It does not start at Windows sign-in.
+
+The local app uses `http://127.0.0.1:4173` and API port `8001`, bound to this PC.
+It uses the project-root `aims.db`, like `npm run api`, and preserves existing data.
+Closing the window leaves the services running until Windows shuts down; reopening
+the shortcut reuses them. Keep this project folder and its virtual environment in place.
+After changing frontend code, rerun `npm.cmd run app:install` to rebuild.
+Startup errors and the first-run generated admin password are in `.local-app/api.log`;
+launcher errors are in `.local-app/launcher.log`. Delete the shortcuts to remove them.
+
 Install frontend dependencies:
 
 ```powershell

@@ -1520,7 +1520,7 @@ export function AdvancedDeviceInventory() {
   });
   const activeListDevice = filteredItems.find((device) => device.id === activeListDeviceId) || filteredItems[0] || items[0] || null;
   const pageActiveCount = items.filter((item) => String(item.status || '').toLowerCase() === 'active').length;
-  const pageCriticalCount = items.filter((item) => deviceHasIssue(item, deviceEnvironment[item.id])).length;
+  const pageCriticalCount = items.filter((item) => deviceHasIssue(item)).length;
   const pageAvailability = items.length ? `${Math.round((pageActiveCount / items.length) * 10000) / 100}%` : '-';
   const pageOnlineAps = items.filter((item) => isWirelessInventoryDevice(item) && String(item.status || '').toLowerCase() === 'active').length;
   const latestSeen = latestDeviceTimestamp(items);
@@ -1628,7 +1628,7 @@ export function AdvancedDeviceInventory() {
         <div className="device-list-kpis">
           <DeviceListKpi icon={<Server size={18} />} tone="blue" label="Total Devices" value={inventorySummary?.total ?? meta.total} sub={`${items.length} loaded on this page`} />
           <DeviceListKpi icon={<ShieldCheck size={18} />} tone="green" label="Active Devices" value={inventorySummary?.active ?? pageActiveCount} sub="All inventory records" />
-          <DeviceListKpi icon={<Activity size={18} />} tone="red" label="Device Issues" value={inventorySummary?.issues ?? pageCriticalCount} sub="Offline, failed, SNMP, or sensor errors" />
+          <DeviceListKpi icon={<Activity size={18} />} tone="red" label="Device Issues" value={inventorySummary?.issues ?? pageCriticalCount} sub="Devices that are not online" />
           <DeviceListKpi icon={<Activity size={18} />} tone="cyan" label="Availability" value={inventorySummary ? `${inventorySummary.availability}%` : pageAvailability} sub="All inventory records" />
           <DeviceListKpi icon={<Cable size={18} />} tone="purple" label="Online APs" value={inventorySummary?.online_aps ?? pageOnlineAps} sub="All inventory records" />
           <DeviceListKpi icon={<Activity size={18} />} tone="orange" label="Latest Seen" value={inventorySummary?.latest_seen_at ? relativeTime(inventorySummary.latest_seen_at) : latestSeen ? relativeTime(latestSeen) : '-'} sub={inventorySummary?.latest_seen_at ? formatDateTime(inventorySummary.latest_seen_at) : latestSeen ? formatDateTime(latestSeen) : 'No timestamp recorded'} />
@@ -3037,18 +3037,8 @@ function isWirelessInventoryDevice(device: Device) {
   return text.includes('wireless') || text.includes('access point') || text.includes('ap') || text.includes('ruckus');
 }
 
-function deviceHasIssue(device: Device, environment?: DeviceEnvironment) {
-  const status = String(device.status || '').toLowerCase();
-  const deviceTypes = loadDeviceTypes();
-  return ['offline', 'failed', 'down'].includes(status)
-    || Boolean(device.snmp_last_error)
-    || deviceStatusLooksBad(device.snmp_status)
-    || deviceStatusLooksBad(device.config_status)
-    || Boolean(environment?.error)
-    || ['danger', 'warning'].includes(environmentTemperatureTone(environment, device))
-    || ['danger', 'warning'].includes(environmentPowerTone(environment, device, deviceTypes))
-    || environmentStateLooksBad(environment?.fan_status)
-    || environmentStateLooksBad(environment?.power_supply_status);
+function deviceHasIssue(device: Device) {
+  return String(device.status || '').toLowerCase() !== 'active';
 }
 
 function deviceIssueRows(device: Device, environment?: DeviceEnvironment) {
